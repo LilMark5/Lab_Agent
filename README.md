@@ -163,6 +163,11 @@ docker compose up --build
 
 ## 六、RAG 评估
 
+评估分两侧：**检索侧**（召回得准不准）和**生成侧**（答得对不对）。题目统一放在
+`backend/eval_dataset.py`，两侧共用同一批问题，分数才能互相印证。
+
+### 1. 检索评估
+
 ```powershell
 cd backend
 python evaluate_rag.py
@@ -171,6 +176,33 @@ python evaluate_rag.py
 脚本对比“纯向量 / 混合检索 / 混合+rerank”三种策略的 Hit@1、Hit@3、MRR、nDCG@3，
 并打印每条问题命中的源文档。知识库文档会先经过递归切块（默认 200 字、40 字重叠），
 检索与 BM25 都在块粒度上执行，命中后按 source + chunk_index 扩展父上下文并带引用。
+
+> 当前内置知识库只有 4 篇文档，三种策略都是满分——这是语料太小导致的饱和，
+> 不代表检索策略没有差异。要看真实差距得先扩充评测语料。
+
+### 2. 生成质量评估（RAGAS）
+
+检索指标满分不代表答案能用：模型可能读错数字，也可能在没有依据时直接编。
+生成侧用 RAGAS 补上 faithfulness / answer_relevancy / context_precision / context_recall。
+
+```powershell
+cd backend
+pip install -r requirements-eval.txt      # 只需装一次
+.\.venv-clean\Scripts\python.exe evaluate_generation.py
+```
+
+跑一次约 5 分钟（14 条用例），明细落到 `backend/eval_reports/generation.json`。
+`--limit 3` 可只跑前几条做冒烟，`--concurrency` 可调并发。
+
+> **依赖提醒**：ragas 0.4.3 依赖 `langchain-community` 的
+> `chat_models.vertexai` 模块，而该模块在 `langchain-community` 0.4.x 已被移除，
+> 所以 `requirements-eval.txt` 把版本钉在 `0.3.31`。原因与排查过程见
+> [docs/21-rag-evaluation.md](docs/21-rag-evaluation.md#71-ragas-043-与-langchain-community-04x-不兼容必踩)。
+
+指标含义、实测分数、口径陷阱（`context_precision` 看排序不看比例、
+`answer_relevancy` 对拒答类恒为 0、分数存在 run-to-run 波动）
+以及「怎么确认分数可信」的裁判自检方法，都写在
+[docs/21 RAG 生成质量评估](docs/21-rag-evaluation.md)。
 
 ## 知识库文档管理（动态 RAG）
 

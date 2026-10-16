@@ -6,19 +6,19 @@
 - hybrid+rerank：融合后再过交叉编码器精排
 
 指标：Hit@1 / Hit@3 / MRR / nDCG@3。
+
+题目来自 ``eval_dataset.py``（与生成侧评估共用同一批问题），
+其中「知识库答不了」的拒答类用例没有标准命中文档，不参与检索指标。
+答案质量（faithfulness 等）见 ``evaluate_generation.py``。
 """
 
 import math
 
 from app.services import kb_service
+from eval_dataset import labeled_pairs
 
 # 每条：问题 -> 应命中的知识文档名（不含 .md 后缀）。
-LABELED_CASES = [
-    ("实验室开放时间是几点", "开放时间"),
-    ("预约之后可以取消吗", "预约规则"),
-    ("设备损坏了怎么办", "安全规范"),
-    ("预约设备要注意什么", "设备使用"),
-]
+LABELED_CASES = labeled_pairs()
 
 
 def _sources(hits: list[dict]) -> list[str]:

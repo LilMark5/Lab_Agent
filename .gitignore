@@ -16,6 +16,13 @@ backend/data/chroma/
 backend/uploads/*
 !backend/uploads/.gitkeep
 
+# 评估结果产物（每次跑分都会变，不进版本库；
+# 权威分数请记在 docs/21-rag-evaluation.md 里）
+backend/eval_reports/
+
 # IDE
 .idea/
 .vscode/
+
+# 本地 Agent 工作记忆（会话日志，非项目产物）
+.workbuddy/
