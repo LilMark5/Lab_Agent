@@ -64,21 +64,33 @@ def _load_mcp_tools():
         return None
 
 
-def build_tools(db: Session, current_user: User):
+def build_tools(db: Session, current_user: User, include_uploaded: bool = True):
     """根据当前请求的 db 和用户构建工具列表。
 
     把 db、current_user 用闭包传进去，工具函数内部就不用每次传 Session。
+    include_uploaded=False 时，知识检索只在系统内置文档范围内进行。
     """
     if not TOOL_DECORATOR_AVAILABLE:
         raise BusinessException(message="未安装 langchain-core 依赖")
 
-    @langchain_tool
-    def search_lab_docs(query: str) -> str:
-        """根据用户的提问检索知识库，包含系统内置文档和用户上传的文档。"""
+    scope_document_id = None if include_uploaded else "static"
+
+    def _search_lab_docs(query: str) -> str:
         try:
-            return kb_service.search(query) or "没有检索到相关的资料"
+            return (
+                kb_service.search(query, document_id=scope_document_id)
+                or "没有检索到相关的资料"
+            )
         except Exception as exc:
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+
+    _search_lab_docs.__name__ = "search_lab_docs"
+    _search_lab_docs.__doc__ = (
+        "根据用户的提问检索知识库，包含系统内置文档和用户上传的文档。"
+        if include_uploaded
+        else "根据用户的提问检索系统内置知识库，不包含用户上传的文档。"
+    )
+    search_lab_docs = langchain_tool(_search_lab_docs)
 
     @langchain_tool
     def list_open_labs(keywords: str = "") -> str:

@@ -11,8 +11,10 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[ChatMessage]
     thread_id: str | None = None
+    include_uploaded: bool = True
 
 
 class ApprovalResumeRequest(BaseModel):
     thread_id: str
     approved: bool
+    include_uploaded: bool = True

@@ -55,7 +55,7 @@ async def chat_resume(
 ):
     try:
         content = await agent_service.resume_agent(
-            db, current_user, data.thread_id, data.approved
+            db, current_user, data.thread_id, data.approved, data.include_uploaded
         )
     except agent_service.ApprovalRequired as exc:
         return Response.success(
@@ -114,7 +114,11 @@ async def chat_stream_resume(
 ):
     async def event_gen():
         async for event in agent_service.resume_stream_agent(
-            db, current_user, data.thread_id, data.approved
+            db,
+            current_user,
+            data.thread_id,
+            data.approved,
+            data.include_uploaded,
         ):
             yield _sse_line(event)
 

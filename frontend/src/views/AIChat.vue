@@ -2,7 +2,14 @@
   <div>
     <el-card>
       <template #header>
-        <div style="font-weight: bold">AI智能助手</div>
+        <div class="chat-header">
+          <span style="font-weight: bold">AI智能助手</span>
+          <el-switch
+            v-model="includeUploaded"
+            size="small"
+            active-text="检索上传文档"
+          />
+        </div>
       </template>
 
       <div ref="listRef" class="chat-list">
@@ -66,6 +73,8 @@ const messages = ref([
 const input = ref('')
 const loading = ref(false)
 const listRef = ref()
+// 是否把「知识库管理」里上传的文档纳入检索范围。
+const includeUploaded = ref(true)
 
 // 一个页面会话一个 thread_id，后端 checkpointer 用它隔离和恢复多轮状态。
 const threadId = ref(
@@ -127,8 +136,9 @@ const resumeStream = async (tid, approved, assistant) => {
   assistant.status = approved ? '已确认，继续执行…' : '已取消本次操作'
   assistant.steps.push(approved ? '用户已确认' : '用户已取消')
   try {
-    await chatStreamResumeApi({ thread_id: tid, approved }, (evt) =>
-      applyStreamEvents(assistant, evt)
+    await chatStreamResumeApi(
+      { thread_id: tid, approved, include_uploaded: includeUploaded.value },
+      (evt) => applyStreamEvents(assistant, evt)
     )
   } catch (err) {
     assistant.status = ''
@@ -186,7 +196,11 @@ const handleSend = async () => {
   try {
     // 服务端 checkpointer 已经保存历史，这里只发本轮新增的用户消息。
     await chatStreamApi(
-      { messages: [{ role: 'user', content: text }], thread_id: threadId.value },
+      {
+        messages: [{ role: 'user', content: text }],
+        thread_id: threadId.value,
+        include_uploaded: includeUploaded.value
+      },
       (evt) => applyStreamEvents(assistant, evt)
     )
   } catch (err) {
@@ -202,6 +216,11 @@ const handleSend = async () => {
 </script>
 
 <style scoped>
+.chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
 .chat-list {
   height: 480px;
   overflow-y: auto;

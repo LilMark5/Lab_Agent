@@ -133,12 +133,12 @@ def _route_after_agent(state: AgentState) -> str:
     return "end"
 
 
-async def build_agent(db: Session, current_user: User):
+async def build_agent(db: Session, current_user: User, include_uploaded: bool = True):
     """构建并编译带 checkpointer 的 LangGraph Agent。"""
     if not settings.LLM_API_KEY:
         raise BusinessException(message="未配置大模型 API Key")
 
-    tools = agent_tools.build_tools(db, current_user)
+    tools = agent_tools.build_tools(db, current_user, include_uploaded=include_uploaded)
     tools_by_name = {tool.name: tool for tool in tools}
     llm = ChatOpenAI(
         api_key=settings.LLM_API_KEY,
@@ -267,7 +267,7 @@ async def run_agent(
     db: Session, current_user: User, data: ChatRequest, thread_id: str
 ) -> str:
     """非流式执行 Agent。遇到写库工具会抛 ApprovalRequired。"""
-    agent = await build_agent(db, current_user)
+    agent = await build_agent(db, current_user, data.include_uploaded)
     inputs = {"messages": _build_input_messages(data)}
     try:
         result = await agent.ainvoke(inputs, _make_config(thread_id))
@@ -283,10 +283,14 @@ async def run_agent(
 
 
 async def resume_agent(
-    db: Session, current_user: User, thread_id: str, approved: bool
+    db: Session,
+    current_user: User,
+    thread_id: str,
+    approved: bool,
+    include_uploaded: bool = True,
 ) -> str:
     """用用户决策恢复被中断的 Agent。"""
-    agent = await build_agent(db, current_user)
+    agent = await build_agent(db, current_user, include_uploaded)
     try:
         result = await agent.ainvoke(
             Command(resume={"approved": approved}), _make_config(thread_id)
@@ -384,17 +388,21 @@ async def _stream_events(agent, inputs: Any, thread_id: str):
 
 async def stream_agent(db: Session, current_user: User, data: ChatRequest, thread_id: str):
     """流式执行 Agent（首轮）。"""
-    agent = await build_agent(db, current_user)
+    agent = await build_agent(db, current_user, data.include_uploaded)
     inputs = {"messages": _build_input_messages(data)}
     async for event in _stream_events(agent, inputs, thread_id):
         yield event
 
 
 async def resume_stream_agent(
-    db: Session, current_user: User, thread_id: str, approved: bool
+    db: Session,
+    current_user: User,
+    thread_id: str,
+    approved: bool,
+    include_uploaded: bool = True,
 ):
     """流式恢复被中断的 Agent。"""
-    agent = await build_agent(db, current_user)
+    agent = await build_agent(db, current_user, include_uploaded)
     inputs = Command(resume={"approved": approved})
     async for event in _stream_events(agent, inputs, thread_id):
         yield event

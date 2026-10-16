@@ -213,17 +213,25 @@ def _cache_set(key: str, value: str, ttl: int = 3600) -> None:
         pass
 
 
-def search(query: str) -> str:
-    """检索并返回拼好的、带引用的资料文本。"""
+def search(query: str, document_id: str | None = None) -> str:
+    """检索并返回拼好的、带引用的资料文本。
+
+    document_id 传入时只在该文档范围内检索；传 "static" 表示只检索内置知识库，
+    从而把用户上传的文档排除在外。
+    """
     if not query.strip():
         return ""
 
-    cache_key = f"rag:v{_corpus_version}:" + hashlib.md5(query.encode("utf-8")).hexdigest()
+    scope = document_id or "all"
+    cache_key = (
+        f"rag:v{_corpus_version}:{scope}:"
+        + hashlib.md5(query.encode("utf-8")).hexdigest()
+    )
     cached = _cache_get(cache_key)
     if cached:
         return cached
 
-    hits = retrieve(query, top_k=settings.FINAL_CONTEXT_K)
+    hits = retrieve(query, top_k=settings.FINAL_CONTEXT_K, document_id=document_id)
     if not hits:
         return ""
 
@@ -241,18 +249,7 @@ def search(query: str) -> str:
 
 def search_document(document_id: str, query: str) -> str:
     """在指定文档内检索，返回带引用的资料文本。"""
-    if not query.strip():
-        return ""
-    hits = retrieve(query, top_k=settings.RETRIEVAL_TOP_K, document_id=document_id)
-    if not hits:
-        return ""
-
-    parts = []
-    for hit in hits[: settings.FINAL_CONTEXT_K]:
-        source = hit.get("meta", {}).get("source") or ""
-        chunk_index = hit.get("meta", {}).get("chunk_index")
-        parts.append(f"[{source}#{chunk_index}]\n{_expand_context(hit)}")
-    return "\n\n".join(parts)
+    return search(query, document_id=document_id)
 
 
 def warmup() -> None:
