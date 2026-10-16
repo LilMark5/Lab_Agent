@@ -42,7 +42,8 @@ const routes = [
         name: 'AuditReservation',
         component: () => import('@/views/AuditReservation.vue')
       },
-      { path: 'ai-chat', name: 'AIChat', component: () => import('@/views/AIChat.vue') }
+      { path: 'ai-chat', name: 'AIChat', component: () => import('@/views/AIChat.vue') },
+      { path: 'kb-manage', name: 'KbManage', component: () => import('@/views/KbManage.vue') }
     ]
   },
   { path: '/', redirect: '/manager/home' },
