@@ -6,7 +6,7 @@
 import asyncio
 from types import SimpleNamespace
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.types import Command
 
 import app.services.agent_service as agent_service
@@ -122,6 +122,49 @@ def test_interrupt_approval_flow(tmp_path, monkeypatch):
             agent_service._make_config("approval-test"),
         )
         assert "预约已提交" in agent_service._last_ai_text(resumed.get("messages") or [])
+        await agent_service.close_checkpointer()
+
+    asyncio.run(run())
+
+
+def test_multiturn_does_not_duplicate_history(tmp_path, monkeypatch):
+    """checkpointer 已保存历史时，前端只发新消息，不能出现历史重复。"""
+    captured = {"calls": []}
+
+    class FakeBound:
+        async def ainvoke(self, messages):
+            captured["calls"].append(list(messages))
+            return AIMessage(content="ok")
+
+    class FakeLLM:
+        def __init__(self, **kwargs):
+            pass
+
+        def bind_tools(self, tools):
+            return FakeBound()
+
+    monkeypatch.setattr(agent_service, "ChatOpenAI", FakeLLM)
+    monkeypatch.setattr(agent_service.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(agent_service.settings, "MCP_ENABLED", False)
+    monkeypatch.setattr(
+        agent_service.settings, "CHECKPOINT_DB_PATH", str(tmp_path / "ckpt.db")
+    )
+    agent_service._checkpointer = None
+    agent_service._checkpointer_cm = None
+
+    user = SimpleNamespace(id=1, role="student")
+
+    async def run():
+        graph = await agent_service.build_agent(None, user)
+        config = agent_service._make_config("multiturn-test")
+        await graph.ainvoke({"messages": [HumanMessage(content="第一句")]}, config)
+        await graph.ainvoke({"messages": [HumanMessage(content="第二句")]}, config)
+
+        second_call = captured["calls"][1]
+        texts = [m.content for m in second_call]
+        assert texts.count("第一句") == 1
+        assert texts.count("第二句") == 1
+        assert sum(isinstance(m, SystemMessage) for m in second_call) == 1
         await agent_service.close_checkpointer()
 
     asyncio.run(run())

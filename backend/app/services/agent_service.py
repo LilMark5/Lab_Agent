@@ -145,7 +145,10 @@ async def build_agent(db: Session, current_user: User):
 
     async def agent_node(state: AgentState) -> dict:
         """agent 节点：调用大模型，返回新的 AI 消息。"""
-        response = await llm.ainvoke(state["messages"])
+        # system prompt 每次调用时注入，不放进 state，避免被 checkpointer 反复持久化。
+        response = await llm.ainvoke(
+            [SystemMessage(content=SYSTEM_PROMPT), *state["messages"]]
+        )
         return {"messages": [response]}
 
     async def approval_node(state: AgentState) -> dict:
@@ -229,17 +232,15 @@ def _interrupt_payload(interrupts: list) -> dict:
     return value if isinstance(value, dict) else {"value": value}
 
 
-def _build_history(data: ChatRequest) -> list:
-    """把前端传来的 user/assistant 文本转换成 LangChain 消息对象。"""
-    history = []
+def _build_input_messages(data: ChatRequest) -> list:
+    """只取本轮新增的用户消息；历史由 checkpointer 负责，前端不再回传。"""
+    messages = []
     for message in data.messages or []:
         if message.role == "user" and message.content.strip():
-            history.append(HumanMessage(content=message.content.strip()))
-        elif message.role == "assistant" and message.content.strip():
-            history.append(AIMessage(content=message.content.strip()))
-    if not history:
+            messages.append(HumanMessage(content=message.content.strip()))
+    if not messages:
         raise BusinessException(message="请输入您要对话的内容")
-    return history
+    return messages
 
 
 def _last_ai_text(messages: list) -> str:
@@ -261,9 +262,8 @@ async def run_agent(
     db: Session, current_user: User, data: ChatRequest, thread_id: str
 ) -> str:
     """非流式执行 Agent。遇到写库工具会抛 ApprovalRequired。"""
-    history = _build_history(data)
     agent = await build_agent(db, current_user)
-    inputs = {"messages": [SystemMessage(content=SYSTEM_PROMPT), *history]}
+    inputs = {"messages": _build_input_messages(data)}
     try:
         result = await agent.ainvoke(inputs, _make_config(thread_id))
     except BusinessException:
@@ -379,9 +379,8 @@ async def _stream_events(agent, inputs: Any, thread_id: str):
 
 async def stream_agent(db: Session, current_user: User, data: ChatRequest, thread_id: str):
     """流式执行 Agent（首轮）。"""
-    history = _build_history(data)
     agent = await build_agent(db, current_user)
-    inputs = {"messages": [SystemMessage(content=SYSTEM_PROMPT), *history]}
+    inputs = {"messages": _build_input_messages(data)}
     async for event in _stream_events(agent, inputs, thread_id):
         yield event
 

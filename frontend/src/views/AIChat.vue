@@ -183,15 +183,10 @@ const handleSend = async () => {
   })
   messages.value.push(assistant)
 
-  // history 只保留 role/content，去掉 status/steps 和刚插入的空助手。
-  const history = messages.value
-    .filter((item) => item.role === 'user' || item.role === 'assistant')
-    .slice(0, -1)
-    .map(({ role, content }) => ({ role, content }))
-
   try {
+    // 服务端 checkpointer 已经保存历史，这里只发本轮新增的用户消息。
     await chatStreamApi(
-      { messages: history, thread_id: threadId.value },
+      { messages: [{ role: 'user', content: text }], thread_id: threadId.value },
       (evt) => applyStreamEvents(assistant, evt)
     )
   } catch (err) {

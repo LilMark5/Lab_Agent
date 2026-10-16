@@ -60,7 +60,9 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    # 前端用 Authorization 头鉴权，不走 Cookie，credentials 必须关掉，
+    # 否则浏览器会因为“通配符 origin + credentials”直接拒绝跨域请求。
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

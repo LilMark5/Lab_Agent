@@ -380,7 +380,11 @@ def get_vector_store():
             _store = store
             return store
         except Exception as exc:
-            logger.warning("Milvus 初始化失败，回退 ChromaDB：%s", exc)
+            logger.warning(
+                "Milvus 初始化失败，回退 ChromaDB（Windows 不支持 Milvus Lite，"
+                "需用 Docker 部署 Milvus 服务）：%s",
+                exc,
+            )
 
     try:
         store = ChromaVectorStore()

@@ -11,7 +11,7 @@
 | 后端 | Python + FastAPI + SQLAlchemy |
 | 数据库 | SQLite（默认）/ PostgreSQL + pgvector / MySQL |
 | 缓存限流 | Redis |
-| 向量库 | ChromaDB / Milvus（Milvus Lite）/ PostgreSQL + pgvector（HNSW） |
+| 向量库 | ChromaDB / Milvus / PostgreSQL + pgvector（HNSW） |
 | AI | LangChain + LangGraph + RAG（递归切块 + 混合检索 + rerank + 父上下文）+ Tool Calling + MCP + ReAct + SSE |
 | 部署 | Docker + Docker Compose + Nginx |
 
@@ -75,6 +75,7 @@ HF_ENDPOINT=https://hf-mirror.com
 # 向量库：auto / chroma / milvus / pgvector
 # pgvector 需要 DATABASE_URL 指向启用 pgvector 扩展的 PostgreSQL
 VECTOR_BACKEND=auto
+# 注意：Milvus Lite 不支持 Windows；Windows 上要用 Milvus 需通过 Docker 起 Milvus 服务。
 MILVUS_LOCAL_URI=./data/milvus.db
 
 # Redis：可选，留空则自动降级不缓存不限流
