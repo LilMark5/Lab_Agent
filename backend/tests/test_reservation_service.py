@@ -67,6 +67,33 @@ def test_overlap_rejected_and_free_slot_accepted():
     db.close()
 
 
+def test_create_reservation_rolls_back_on_commit_failure(monkeypatch):
+    """commit 失败时应回滚会话并继续抛出，不留脏状态。"""
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}
+    )
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    db = session()
+
+    user = _make_user(db, "stu_rollback")
+    lab = _make_lab(db, "lab_rollback")
+
+    # 让 commit 抛错，模拟 DB 抖动 / 并发冲突。
+    def _boom():
+        raise RuntimeError("commit failed")
+
+    monkeypatch.setattr(db, "commit", _boom)
+    with pytest.raises(RuntimeError):
+        reservation_service.create_reservation(db, user, _request(lab.id, "14:00", "15:00"))
+
+    # rollback 后，待提交的预约不应落库。
+    db.rollback()
+    leftover = db.query(Reservation).filter(Reservation.lab_id == lab.id).count()
+    assert leftover == 0
+    db.close()
+
+
 @pytest.mark.skipif(
     not (settings.DATABASE_URL or "").startswith("postgresql"),
     reason="并发控制测试需要 PostgreSQL（SELECT ... FOR UPDATE）",

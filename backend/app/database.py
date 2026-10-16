@@ -43,6 +43,10 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        # 兜底回滚：业务代码若未显式 rollback，这里保证异常时不留脏会话。
+        db.rollback()
+        raise
     finally:
         db.close()
 

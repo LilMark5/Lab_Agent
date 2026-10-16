@@ -84,7 +84,12 @@ def create_reservation(
         status=0,
     )
     db.add(reservation)
-    db.commit()
+    # 显式事务边界：commit 失败时回滚，避免会话残留脏状态。
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
 
 def get_reservation_page_list(
@@ -127,7 +132,11 @@ def cancel_reservation(db: Session, current_user: User, reservation_id: int) -> 
     if item.status != 0:
         raise BusinessException(message="当前状态无法取消")
     item.status = 3
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
 
 def audit_reservation(db: Session, reservation_id: int, status: int) -> None:
@@ -139,7 +148,11 @@ def audit_reservation(db: Session, reservation_id: int, status: int) -> None:
     if item.status != 0:
         raise BusinessException(message="当前状态不支持审核")
     item.status = status
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
 
 def expire_pending_reservations() -> None:
@@ -156,7 +169,11 @@ def expire_pending_reservations() -> None:
                 item.status = 3
                 changed = True
         if changed:
-            db.commit()
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
     finally:
         db.close()
 
