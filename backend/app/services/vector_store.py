@@ -23,8 +23,8 @@ CHROMA_DIR = BASE_DIR / "data" / "chroma"
 
 # 向量维度与 embedding 模型。
 EMBEDDING_MODEL = settings.EMBEDDING_MODEL
-EMBEDDING_DIM = 384  # bge-small-zh-v1.5 默认 384 维
 _sentence_model = None
+_embedding_dim = None
 
 
 def _embed_texts(texts: list[str]) -> list[list[float]]:
@@ -39,6 +39,14 @@ def _embed_texts(texts: list[str]) -> list[list[float]]:
     if _sentence_model is None:
         _sentence_model = SentenceTransformer(EMBEDDING_MODEL)
     return _sentence_model.encode(texts, normalize_embeddings=True).tolist()
+
+
+def get_embedding_dim() -> int:
+    """动态获取 embedding 维度，避免换模型后维度写死导致建表/建索引失败。"""
+    global _embedding_dim
+    if _embedding_dim is None:
+        _embedding_dim = len(_embed_texts(["dim"])[0])
+    return _embedding_dim
 
 
 class ChromaVectorStore:
@@ -136,7 +144,7 @@ class MilvusVectorStore:
         if not client.has_collection(self.COLLECTION):
             schema = client.create_schema(auto_id=False, enable_dynamic_field=False)
             schema.add_field("pk", DataType.VARCHAR, is_primary=True, max_length=128)
-            schema.add_field("embedding", DataType.FLOAT_VECTOR, dim=EMBEDDING_DIM)
+            schema.add_field("embedding", DataType.FLOAT_VECTOR, dim=get_embedding_dim())
             schema.add_field("text", DataType.VARCHAR, max_length=8192)
             schema.add_field("source", DataType.VARCHAR, max_length=512)
             schema.add_field("chunk_index", DataType.INT64)
@@ -210,7 +218,7 @@ class PgVectorStore:
     """基于 PostgreSQL + pgvector 的向量存储实现。
 
     业务数据与向量放在同一个 PostgreSQL 里，HNSW 索引 + cosine 距离。
-    向量以字符串形式传参并在 SQL 里 `::vector` 强制转换，避免依赖连接级适配器注册。
+    向量以字符串形式传参并在 SQL 里 CAST 成 vector，避免依赖连接级适配器注册。
     """
 
     TABLE = "kb_chunks"
@@ -234,9 +242,21 @@ class PgVectorStore:
 
         self._engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
         table = self.TABLE
+        dim = get_embedding_dim()
 
         with self._engine.begin() as conn:
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            existing_dim = conn.execute(
+                text(
+                    "SELECT a.atttypmod FROM pg_attribute a "
+                    "JOIN pg_class c ON a.attrelid = c.oid "
+                    "WHERE c.relname = :t AND a.attname = 'embedding'"
+                ),
+                {"t": table},
+            ).scalar()
+            # 换 embedding 模型导致维度变化时，自动重建表（旧表会被丢弃）。
+            if existing_dim and int(existing_dim) != dim:
+                conn.execute(text(f"DROP TABLE {table}"))
             conn.execute(
                 text(
                     f"""
@@ -245,7 +265,7 @@ class PgVectorStore:
                         text TEXT NOT NULL,
                         source VARCHAR(512) NOT NULL,
                         chunk_index INTEGER NOT NULL,
-                        embedding vector({EMBEDDING_DIM}) NOT NULL
+                        embedding vector({dim}) NOT NULL
                     )
                     """
                 )
@@ -268,7 +288,7 @@ class PgVectorStore:
                             INSERT INTO {table}
                                 (id, text, source, chunk_index, embedding)
                             VALUES
-                                (:id, :text, :source, :chunk_index, :embedding::vector)
+                                (:id, :text, :source, :chunk_index, CAST(:embedding AS vector))
                             ON CONFLICT (id) DO UPDATE SET
                                 text = EXCLUDED.text,
                                 source = EXCLUDED.source,
@@ -305,9 +325,9 @@ class PgVectorStore:
         sql = text(
             f"""
             SELECT id, text, source, chunk_index,
-                   1 - (embedding <=> :vec::vector) AS score
+                   1 - (embedding <=> CAST(:vec AS vector)) AS score
             FROM {self.TABLE}
-            ORDER BY embedding <=> :vec::vector
+            ORDER BY embedding <=> CAST(:vec AS vector)
             LIMIT :k
             """
         )
