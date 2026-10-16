@@ -42,9 +42,11 @@ def _tokenize(text: str) -> list[str]:
     return unigrams + bigrams
 
 
-def _bm25_search(query: str, top_k: int = 5) -> list[dict]:
+def _bm25_search(query: str, top_k: int = 5, document_id: str | None = None) -> list[dict]:
     """BM25 关键词召回，在“块”粒度上打分。"""
     chunks = _get_chunks()
+    if document_id:
+        chunks = [c for c in chunks if c["meta"].get("document_id") == document_id]
     corpus = [_tokenize(c["doc"]) for c in chunks]
     if not corpus:
         return []
@@ -65,12 +67,12 @@ def _bm25_search(query: str, top_k: int = 5) -> list[dict]:
     return hits[:top_k]
 
 
-def _vector_search(query: str, top_k: int = 5) -> list[dict]:
+def _vector_search(query: str, top_k: int = 5, document_id: str | None = None) -> list[dict]:
     store = vector_store.get_vector_store()
     if store is None:
         return []
     try:
-        return store.search(query, top_k=top_k)
+        return store.search(query, top_k=top_k, document_id=document_id)
     except Exception as exc:
         logger.warning("向量检索失败：%s", exc)
         return []
@@ -112,15 +114,17 @@ def _rerank(query: str, hits: list[dict]) -> list[dict]:
     return hits
 
 
-def retrieve(query: str, top_k: int | None = None) -> list[dict]:
+def retrieve(query: str, top_k: int | None = None, document_id: str | None = None) -> list[dict]:
     """检索主入口：返回融合 + 重排后的块命中列表。"""
     if not query.strip():
         return []
     top_k = top_k or settings.RETRIEVAL_TOP_K
 
-    vector_hits = _vector_search(query, top_k=top_k)
+    vector_hits = _vector_search(query, top_k=top_k, document_id=document_id)
     keyword_hits = (
-        _bm25_search(query, top_k=top_k) if settings.HYBRID_SEARCH_ENABLED else []
+        _bm25_search(query, top_k=top_k, document_id=document_id)
+        if settings.HYBRID_SEARCH_ENABLED
+        else []
     )
     if not vector_hits and not keyword_hits:
         return []
@@ -139,7 +143,16 @@ def _expand_context(hit: dict, window: int | None = None) -> str:
     if source is None or chunk_index is None:
         return hit.get("doc", "")
 
-    same_source = [c for c in _get_chunks() if c["meta"].get("source") == source]
+    document_id = hit.get("meta", {}).get("document_id")
+    same_source = [
+        c
+        for c in _get_chunks()
+        if c["meta"].get("source") == source
+        and c["meta"].get("document_id") == document_id
+    ]
+    if not same_source:
+        # 动态上传文档不在静态块缓存里，直接返回命中块本身。
+        return hit.get("doc", "")
     low = max(0, int(chunk_index) - window)
     high = min(len(same_source), int(chunk_index) + window + 1)
     return "\n".join(c["doc"] for c in same_source[low:high])
@@ -204,6 +217,22 @@ def search(query: str) -> str:
     result = "\n\n".join(parts)
     _cache_set(cache_key, result)
     return result
+
+
+def search_document(document_id: str, query: str) -> str:
+    """在指定文档内检索，返回带引用的资料文本。"""
+    if not query.strip():
+        return ""
+    hits = retrieve(query, top_k=settings.RETRIEVAL_TOP_K, document_id=document_id)
+    if not hits:
+        return ""
+
+    parts = []
+    for hit in hits[: settings.FINAL_CONTEXT_K]:
+        source = hit.get("meta", {}).get("source") or ""
+        chunk_index = hit.get("meta", {}).get("chunk_index")
+        parts.append(f"[{source}#{chunk_index}]\n{_expand_context(hit)}")
+    return "\n\n".join(parts)
 
 
 def warmup() -> None:

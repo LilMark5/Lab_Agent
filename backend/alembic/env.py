@@ -7,7 +7,7 @@ from sqlalchemy import engine_from_config, pool
 
 from app.config import settings
 from app.database import Base
-from app.models import equipment, lab, reservation, user  # noqa: F401
+from app.models import equipment, kb_document, lab, reservation, user  # noqa: F401
 
 config = context.config
 

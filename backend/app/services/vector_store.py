@@ -4,10 +4,11 @@
 三者的共同接口：
     is_ready() -> bool
     count()    -> int
-    search(query, top_k) -> list[dict]  # 每项含 id / doc / meta / score
+    add_chunks(chunks)            # 新增/更新块（按 id 幂等）
+    delete_chunks(document_id)    # 删除某文档的全部块
+    search(query, top_k, document_id=None) -> list[dict]
 
-知识文档统一由 kb_chunking.load_kb_chunks() 切成块后再入库，
-因此三个后端存的是“块”，而不是整篇 Markdown。
+每个块通过 meta.document_id 归属到文档：静态知识库用 "static"，上传文档用其注册 ID。
 """
 
 import logging
@@ -52,7 +53,7 @@ def get_embedding_dim() -> int:
 class ChromaVectorStore:
     """基于 ChromaDB 的向量存储实现。"""
 
-    COLLECTION = "lab_kb_chunks"
+    COLLECTION = "lab_kb_chunks_v2"
 
     def __init__(self) -> None:
         self._col = None
@@ -78,26 +79,36 @@ class ChromaVectorStore:
         col = client.get_or_create_collection(
             name=self.COLLECTION, embedding_function=embedding_fn
         )
-        if col.count() == 0:
-            chunks = kb_chunking.load_kb_chunks()
-            if chunks:
-                col.add(
-                    ids=[c["id"] for c in chunks],
-                    documents=[c["doc"] for c in chunks],
-                    metadatas=[c["meta"] for c in chunks],
-                )
         self._col = col
+        if col.count() == 0:
+            self.add_chunks(kb_chunking.load_kb_chunks())
         self._ready = True
         return col
+
+    def add_chunks(self, chunks: list[dict]) -> None:
+        if not chunks:
+            return
+        col = self._ensure()
+        col.upsert(
+            ids=[c["id"] for c in chunks],
+            documents=[c["doc"] for c in chunks],
+            metadatas=[c["meta"] for c in chunks],
+        )
+
+    def delete_chunks(self, document_id: str) -> None:
+        col = self._ensure()
+        col.delete(where={"document_id": document_id})
 
     def count(self) -> int:
         return int(self._ensure().count())
 
-    def search(self, query: str, top_k: int = 5) -> list[dict]:
+    def search(self, query: str, top_k: int = 5, document_id: str | None = None) -> list[dict]:
         col = self._ensure()
+        where = {"document_id": document_id} if document_id else None
         res = col.query(
             query_texts=[query],
             n_results=min(top_k, col.count()),
+            where=where,
             include=["documents", "metadatas", "distances"],
         )
         ids = (res.get("ids") or [[]])[0]
@@ -106,22 +117,15 @@ class ChromaVectorStore:
         distances = (res.get("distances") or [[]])[0]
         hits = []
         for chunk_id, doc, meta, dist in zip(ids, docs, metas, distances):
-            score = 1 / (1 + float(dist))  # 距离越小，分数越高。
-            hits.append(
-                {
-                    "id": chunk_id,
-                    "doc": doc,
-                    "meta": meta or {},
-                    "score": score,
-                }
-            )
+            score = 1 / (1 + float(dist))
+            hits.append({"id": chunk_id, "doc": doc, "meta": meta or {}, "score": score})
         return hits
 
 
 class MilvusVectorStore:
-    """基于 Milvus Lite 的向量存储实现。"""
+    """基于 Milvus 的向量存储实现（Lite 文件模式或独立服务）。"""
 
-    COLLECTION = "lab_kb_chunks"
+    COLLECTION = "lab_kb_chunks_v2"
 
     def __init__(self) -> None:
         self._client = None
@@ -140,6 +144,7 @@ class MilvusVectorStore:
 
         Path(settings.MILVUS_LOCAL_URI).parent.mkdir(parents=True, exist_ok=True)
         client = MilvusClient(uri=settings.MILVUS_LOCAL_URI)
+        self._client = client
 
         if not client.has_collection(self.COLLECTION):
             schema = client.create_schema(auto_id=False, enable_dynamic_field=False)
@@ -148,37 +153,40 @@ class MilvusVectorStore:
             schema.add_field("text", DataType.VARCHAR, max_length=8192)
             schema.add_field("source", DataType.VARCHAR, max_length=512)
             schema.add_field("chunk_index", DataType.INT64)
+            schema.add_field("document_id", DataType.VARCHAR, max_length=64)
             index_params = client.prepare_index_params()
             index_params.add_index(
-                field_name="embedding",
-                index_type="FLAT",
-                metric_type="COSINE",
+                field_name="embedding", index_type="FLAT", metric_type="COSINE"
             )
             client.create_collection(
-                collection_name=self.COLLECTION,
-                schema=schema,
-                index_params=index_params,
+                collection_name=self.COLLECTION, schema=schema, index_params=index_params
             )
 
-        chunks = kb_chunking.load_kb_chunks()
-        if chunks:
-            vectors = _embed_texts([c["doc"] for c in chunks])
-            rows = [
-                {
-                    "pk": c["id"],
-                    "embedding": vector,
-                    "text": c["doc"],
-                    "source": c["meta"]["source"],
-                    "chunk_index": int(c["meta"]["chunk_index"]),
-                }
-                for c, vector in zip(chunks, vectors)
-            ]
-            # upsert 按主键幂等，重复启动不会产生重复数据。
-            client.upsert(collection_name=self.COLLECTION, data=rows)
-
-        self._client = client
+        self.add_chunks(kb_chunking.load_kb_chunks())
         self._ready = True
         return client
+
+    def add_chunks(self, chunks: list[dict]) -> None:
+        if not chunks:
+            return
+        client = self._ensure()
+        vectors = _embed_texts([c["doc"] for c in chunks])
+        rows = [
+            {
+                "pk": c["id"],
+                "embedding": vector,
+                "text": c["doc"],
+                "source": c["meta"]["source"],
+                "chunk_index": int(c["meta"]["chunk_index"]),
+                "document_id": c["meta"].get("document_id") or "static",
+            }
+            for c, vector in zip(chunks, vectors)
+        ]
+        client.upsert(collection_name=self.COLLECTION, data=rows)
+
+    def delete_chunks(self, document_id: str) -> None:
+        client = self._ensure()
+        client.delete(collection_name=self.COLLECTION, filter=f'document_id == "{document_id}"')
 
     def count(self) -> int:
         client = self._ensure()
@@ -188,14 +196,16 @@ class MilvusVectorStore:
         except Exception:
             return len(kb_chunking.load_kb_chunks())
 
-    def search(self, query: str, top_k: int = 5) -> list[dict]:
+    def search(self, query: str, top_k: int = 5, document_id: str | None = None) -> list[dict]:
         client = self._ensure()
         vector = _embed_texts([query])[0]
+        filter_expr = f'document_id == "{document_id}"' if document_id else None
         res = client.search(
             collection_name=self.COLLECTION,
             data=[vector],
             limit=top_k,
-            output_fields=["pk", "text", "source", "chunk_index"],
+            filter=filter_expr,
+            output_fields=["pk", "text", "source", "chunk_index", "document_id"],
         )
         hits = []
         for hit in res[0]:
@@ -207,19 +217,16 @@ class MilvusVectorStore:
                     "meta": {
                         "source": entity.get("source", ""),
                         "chunk_index": entity.get("chunk_index"),
+                        "document_id": entity.get("document_id"),
                     },
-                    "score": float(hit.get("distance", 0)),  # COSINE 越大越相关
+                    "score": float(hit.get("distance", 0)),
                 }
             )
         return hits
 
 
 class PgVectorStore:
-    """基于 PostgreSQL + pgvector 的向量存储实现。
-
-    业务数据与向量放在同一个 PostgreSQL 里，HNSW 索引 + cosine 距离。
-    向量以字符串形式传参并在 SQL 里 CAST 成 vector，避免依赖连接级适配器注册。
-    """
+    """基于 PostgreSQL + pgvector 的向量存储实现。"""
 
     TABLE = "kb_chunks"
 
@@ -254,7 +261,6 @@ class PgVectorStore:
                 ),
                 {"t": table},
             ).scalar()
-            # 换 embedding 模型导致维度变化时，自动重建表（旧表会被丢弃）。
             if existing_dim and int(existing_dim) != dim:
                 conn.execute(text(f"DROP TABLE {table}"))
             conn.execute(
@@ -265,10 +271,14 @@ class PgVectorStore:
                         text TEXT NOT NULL,
                         source VARCHAR(512) NOT NULL,
                         chunk_index INTEGER NOT NULL,
+                        document_id VARCHAR(64),
                         embedding vector({dim}) NOT NULL
                     )
                     """
                 )
+            )
+            conn.execute(
+                text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS document_id VARCHAR(64)")
             )
             conn.execute(
                 text(
@@ -277,36 +287,54 @@ class PgVectorStore:
                 )
             )
 
-        chunks = kb_chunking.load_kb_chunks()
-        if chunks:
-            vectors = _embed_texts([c["doc"] for c in chunks])
-            with self._engine.begin() as conn:
-                for chunk, vector in zip(chunks, vectors):
-                    conn.execute(
-                        text(
-                            f"""
-                            INSERT INTO {table}
-                                (id, text, source, chunk_index, embedding)
-                            VALUES
-                                (:id, :text, :source, :chunk_index, CAST(:embedding AS vector))
-                            ON CONFLICT (id) DO UPDATE SET
-                                text = EXCLUDED.text,
-                                source = EXCLUDED.source,
-                                chunk_index = EXCLUDED.chunk_index,
-                                embedding = EXCLUDED.embedding
-                            """
-                        ),
-                        {
-                            "id": chunk["id"],
-                            "text": chunk["doc"],
-                            "source": chunk["meta"]["source"],
-                            "chunk_index": int(chunk["meta"]["chunk_index"]),
-                            "embedding": str(vector),
-                        },
-                    )
-
+        self.add_chunks(kb_chunking.load_kb_chunks())
         self._ready = True
         return self._engine
+
+    def add_chunks(self, chunks: list[dict]) -> None:
+        if not chunks:
+            return
+        from sqlalchemy import text
+
+        engine = self._ensure()
+        vectors = _embed_texts([c["doc"] for c in chunks])
+        with engine.begin() as conn:
+            for chunk, vector in zip(chunks, vectors):
+                conn.execute(
+                    text(
+                        f"""
+                        INSERT INTO {self.TABLE}
+                            (id, text, source, chunk_index, document_id, embedding)
+                        VALUES
+                            (:id, :text, :source, :chunk_index, :document_id,
+                             CAST(:embedding AS vector))
+                        ON CONFLICT (id) DO UPDATE SET
+                            text = EXCLUDED.text,
+                            source = EXCLUDED.source,
+                            chunk_index = EXCLUDED.chunk_index,
+                            document_id = EXCLUDED.document_id,
+                            embedding = EXCLUDED.embedding
+                        """
+                    ),
+                    {
+                        "id": chunk["id"],
+                        "text": chunk["doc"],
+                        "source": chunk["meta"]["source"],
+                        "chunk_index": int(chunk["meta"]["chunk_index"]),
+                        "document_id": chunk["meta"].get("document_id") or "static",
+                        "embedding": str(vector),
+                    },
+                )
+
+    def delete_chunks(self, document_id: str) -> None:
+        from sqlalchemy import text
+
+        engine = self._ensure()
+        with engine.begin() as conn:
+            conn.execute(
+                text(f"DELETE FROM {self.TABLE} WHERE document_id = :d"),
+                {"d": document_id},
+            )
 
     def count(self) -> int:
         from sqlalchemy import text
@@ -317,22 +345,27 @@ class PgVectorStore:
                 conn.execute(text(f"SELECT count(*) FROM {self.TABLE}")).scalar_one()
             )
 
-    def search(self, query: str, top_k: int = 5) -> list[dict]:
+    def search(self, query: str, top_k: int = 5, document_id: str | None = None) -> list[dict]:
         from sqlalchemy import text
 
         engine = self._ensure()
         vector = _embed_texts([query])[0]
+        where = "WHERE document_id = :doc" if document_id else ""
+        params: dict[str, Any] = {"vec": str(vector), "k": top_k}
+        if document_id:
+            params["doc"] = document_id
         sql = text(
             f"""
-            SELECT id, text, source, chunk_index,
+            SELECT id, text, source, chunk_index, document_id,
                    1 - (embedding <=> CAST(:vec AS vector)) AS score
             FROM {self.TABLE}
+            {where}
             ORDER BY embedding <=> CAST(:vec AS vector)
             LIMIT :k
             """
         )
         with engine.connect() as conn:
-            rows = conn.execute(sql, {"vec": str(vector), "k": top_k}).mappings().all()
+            rows = conn.execute(sql, params).mappings().all()
 
         hits = []
         for row in rows:
@@ -343,6 +376,7 @@ class PgVectorStore:
                     "meta": {
                         "source": row["source"],
                         "chunk_index": row["chunk_index"],
+                        "document_id": row["document_id"],
                     },
                     "score": float(row["score"]),
                 }
@@ -362,7 +396,6 @@ def get_vector_store():
 
     preferred = settings.VECTOR_BACKEND.lower()
 
-    # 显式选 pgvector：失败直接抛出，不静默回退，避免“以为在用 pgvector 其实在用 Chroma”。
     if preferred == "pgvector":
         store = PgVectorStore()
         store._ensure()

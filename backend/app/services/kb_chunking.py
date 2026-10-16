@@ -121,9 +121,28 @@ def load_kb_chunks() -> list[dict]:
                     "meta": {
                         "source": path.name,
                         "chunk_index": index,
+                        "document_id": "static",
                     },
                 }
             )
+    return chunks
+
+
+def chunk_document_text(document_id: str, filename: str, text: str) -> list[dict]:
+    """把一份上传文档的纯文本切成带 document_id 的块。"""
+    chunks: list[dict] = []
+    for index, chunk_text in enumerate(split_text((text or "").strip())):
+        chunks.append(
+            {
+                "id": f"{document_id}#{index}",
+                "doc": chunk_text,
+                "meta": {
+                    "source": filename,
+                    "chunk_index": index,
+                    "document_id": document_id,
+                },
+            }
+        )
     return chunks
 
 

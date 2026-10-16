@@ -20,7 +20,7 @@ from app.common.exceptions import (
 from app.config import UPLOAD_DIR, settings
 from app.database import Base, engine
 from app.init_data import seed_if_empty
-from app.models import equipment, lab, reservation, user  # noqa: F401
+from app.models import equipment, kb_document, lab, reservation, user  # noqa: F401
 from app.services import agent_service, kb_service, reservation_service
 
 logger = logging.getLogger(__name__)

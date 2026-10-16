@@ -172,6 +172,14 @@ python evaluate_rag.py
 并打印每条问题命中的源文档。知识库文档会先经过递归切块（默认 200 字、40 字重叠），
 检索与 BM25 都在块粒度上执行，命中后按 source + chunk_index 扩展父上下文并带引用。
 
+## 知识库文档管理（动态 RAG）
+
+- `POST /api/kb/documents`：上传 Markdown/TXT/PDF/DOCX，自动解析、切块、向量化入库，
+  内容按 SHA-256 去重，重复上传直接复用已有文档。
+- `GET /api/kb/documents`：文档列表与状态（ready/failed）。
+- `GET /api/kb/documents/{id}/search?query=`：在指定文档内检索并带引用。
+- `DELETE /api/kb/documents/{id}`：删除文档并同步清理其全部向量。
+
 ## 七、常见问题排查
 
 | 现象 | 原因 | 解决 |
