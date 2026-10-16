@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.venv-clean/
+*.db
+
+# 前端
+node_modules/
+dist/
+
+# 环境变量与本地数据
+.env
+backend/data/chroma/
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# IDE
+.idea/
+.vscode/
