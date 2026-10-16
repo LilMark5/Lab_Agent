@@ -11,8 +11,8 @@
 | 后端 | Python + FastAPI + SQLAlchemy |
 | 数据库 | SQLite（默认）/ PostgreSQL + pgvector / MySQL |
 | 缓存限流 | Redis |
-| 向量库 | ChromaDB / Milvus（Milvus Lite） |
-| AI | LangChain + LangGraph + RAG（混合检索 + rerank）+ Tool Calling + MCP + ReAct + SSE |
+| 向量库 | ChromaDB / Milvus（Milvus Lite）/ PostgreSQL + pgvector（HNSW） |
+| AI | LangChain + LangGraph + RAG（递归切块 + 混合检索 + rerank + 父上下文）+ Tool Calling + MCP + ReAct + SSE |
 | 部署 | Docker + Docker Compose + Nginx |
 
 ## 一、环境要求
@@ -72,7 +72,8 @@ LLM_MODEL=gpt-4o-mini
 # 国内下载向量模型用镜像，否则第一次启动会卡在下载
 HF_ENDPOINT=https://hf-mirror.com
 
-# 向量库：auto 自动选择；milvus 用 Milvus Lite
+# 向量库：auto / chroma / milvus / pgvector
+# pgvector 需要 DATABASE_URL 指向启用 pgvector 扩展的 PostgreSQL
 VECTOR_BACKEND=auto
 MILVUS_LOCAL_URI=./data/milvus.db
 
@@ -158,7 +159,9 @@ cd backend
 python evaluate_rag.py
 ```
 
-脚本会对比“纯向量召回”和“混合检索”的 hit@2，并打印每条问题的命中情况。
+脚本对比“纯向量 / 混合检索 / 混合+rerank”三种策略的 Hit@1、Hit@3、MRR、nDCG@3，
+并打印每条问题命中的源文档。知识库文档会先经过递归切块（默认 200 字、40 字重叠），
+检索与 BM25 都在块粒度上执行，命中后按 source + chunk_index 扩展父上下文并带引用。
 
 ## 七、常见问题排查
 

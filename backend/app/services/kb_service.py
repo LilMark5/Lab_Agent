@@ -5,19 +5,29 @@
 2. BM25 关键词检索解决“精确词、专有名词”。
 3. RRF 融合两种排序。
 4. 交叉编码器 rerank 做精排。
-5. Redis 缓存相似问题，体现成本意识。
+5. 检索粒度是“块”，命中后按 source + chunk_index 扩展父上下文并带引用。
+6. Redis 缓存相似问题，体现成本意识。
 """
 
 import hashlib
 import logging
 
-from app.config import BASE_DIR, settings
-from app.services import vector_store
+from app.config import settings
+from app.services import kb_chunking, vector_store
 
 logger = logging.getLogger(__name__)
 
-KB_DIR = BASE_DIR / "data" / "kb"
 _redis = None
+_chunks_cache: list[dict] | None = None
+_rerank_model = None
+
+
+def _get_chunks() -> list[dict]:
+    """知识库块的内存缓存；文件是静态的，缓存一次即可。"""
+    global _chunks_cache
+    if _chunks_cache is None:
+        _chunks_cache = kb_chunking.load_kb_chunks()
+    return _chunks_cache
 
 
 def _tokenize(text: str) -> list[str]:
@@ -26,48 +36,37 @@ def _tokenize(text: str) -> list[str]:
     不引入 jieba 也能处理“开放时间”“实验室预约”这类中文词，
     因为二元组覆盖了大部分双字词。
     """
-    cleaned = [ch for ch in text.lower() if ch.isalnum()]  # 去掉标点和空格
-    unigrams = list(cleaned)                                # 单字
-    bigrams = [a + b for a, b in zip(cleaned, cleaned[1:])]  # 二元组
+    cleaned = [ch for ch in text.lower() if ch.isalnum()]
+    unigrams = list(cleaned)
+    bigrams = [a + b for a, b in zip(cleaned, cleaned[1:])]
     return unigrams + bigrams
 
 
-def _load_kb_files() -> list[dict]:
-    KB_DIR.mkdir(parents=True, exist_ok=True)
-    files = []
-    for path in sorted(KB_DIR.glob("*.md")):
-        text = path.read_text(encoding="utf-8").strip()
-        if text:
-            files.append({"id": path.stem, "doc": text, "meta": {"source": path.name}})
-    return files
-
-
 def _bm25_search(query: str, top_k: int = 5) -> list[dict]:
-    """BM25 关键词召回。优先用 rank_bm25，否则退化为 token 重叠打分。"""
-    files = _load_kb_files()                          # 用原始 KB 文件做关键词检索
-    corpus = [_tokenize(f["doc"]) for f in files]     # 每个文档变成词袋
+    """BM25 关键词召回，在“块”粒度上打分。"""
+    chunks = _get_chunks()
+    corpus = [_tokenize(c["doc"]) for c in chunks]
     if not corpus:
         return []
     try:
         from rank_bm25 import BM25Okapi
 
-        bm25 = BM25Okapi(corpus)                      # BM25 统计模型
-        scores = bm25.get_scores(_tokenize(query))    # 给每个文档打分
+        bm25 = BM25Okapi(corpus)
+        scores = bm25.get_scores(_tokenize(query))
     except Exception:
-        # 没装 rank_bm25 时的降级：词集合交集大小当分数
         query_tokens = set(_tokenize(query))
         scores = [len(query_tokens & set(tokens)) for tokens in corpus]
 
     hits = [
-        {"doc": f["doc"], "meta": f["meta"], "score": float(score)}
-        for f, score in zip(files, scores)
+        {"id": c["id"], "doc": c["doc"], "meta": c["meta"], "score": float(score)}
+        for c, score in zip(chunks, scores)
     ]
     hits.sort(key=lambda x: x["score"], reverse=True)
     return hits[:top_k]
 
 
 def _vector_search(query: str, top_k: int = 5) -> list[dict]:
-    store = vector_store.get_vector_store()  # 可能是 Chroma 或 Milvus
+    store = vector_store.get_vector_store()
     if store is None:
         return []
     try:
@@ -78,14 +77,14 @@ def _vector_search(query: str, top_k: int = 5) -> list[dict]:
 
 
 def _rrf_fusion(vector_hits: list[dict], keyword_hits: list[dict], k: int = 60) -> list[dict]:
-    """Reciprocal Rank Fusion：按名次融合多路召回，简单且效果稳定。"""
-    fused: dict[str, dict] = {}  # key -> 命中的文档项
+    """Reciprocal Rank Fusion：按名次融合多路召回，块 id 作为唯一键。"""
+    fused: dict[str, dict] = {}
     for rank, hit in enumerate(vector_hits):
-        key = hit.get("meta", {}).get("source") or hit.get("doc", "")[:32]  # 用文件名做唯一键
+        key = hit.get("id") or hit.get("meta", {}).get("source", "") or hit["doc"][:32]
         item = fused.setdefault(key, dict(hit))
-        item["rrf"] = item.get("rrf", 0) + 1 / (k + rank + 1)  # RRF 名次分
+        item["rrf"] = item.get("rrf", 0) + 1 / (k + rank + 1)
     for rank, hit in enumerate(keyword_hits):
-        key = hit.get("meta", {}).get("source") or hit.get("doc", "")[:32]
+        key = hit.get("id") or hit.get("meta", {}).get("source", "") or hit["doc"][:32]
         item = fused.setdefault(key, dict(hit))
         item["rrf"] = item.get("rrf", 0) + 1 / (k + rank + 1)
     merged = list(fused.values())
@@ -95,14 +94,16 @@ def _rrf_fusion(vector_hits: list[dict], keyword_hits: list[dict], k: int = 60) 
 
 def _rerank(query: str, hits: list[dict]) -> list[dict]:
     """用 CrossEncoder 对召回结果精排。失败则保持原顺序。"""
+    global _rerank_model
     if not settings.RERANK_ENABLED or len(hits) < 2:
         return hits
     try:
         from sentence_transformers import CrossEncoder
 
-        model = CrossEncoder(settings.RERANK_MODEL)          # 交叉编码器：更准但更慢
-        pairs = [(query, h["doc"]) for h in hits]            # 问题-文档成对打分
-        scores = model.predict(pairs)
+        if _rerank_model is None:
+            _rerank_model = CrossEncoder(settings.RERANK_MODEL)
+        pairs = [(query, h["doc"]) for h in hits]
+        scores = _rerank_model.predict(pairs)
         for h, score in zip(hits, scores):
             h["rerank"] = float(score)
         hits.sort(key=lambda x: x.get("rerank", 0), reverse=True)
@@ -111,8 +112,41 @@ def _rerank(query: str, hits: list[dict]) -> list[dict]:
     return hits
 
 
+def retrieve(query: str, top_k: int | None = None) -> list[dict]:
+    """检索主入口：返回融合 + 重排后的块命中列表。"""
+    if not query.strip():
+        return []
+    top_k = top_k or settings.RETRIEVAL_TOP_K
+
+    vector_hits = _vector_search(query, top_k=top_k)
+    keyword_hits = (
+        _bm25_search(query, top_k=top_k) if settings.HYBRID_SEARCH_ENABLED else []
+    )
+    if not vector_hits and not keyword_hits:
+        return []
+
+    merged = _rrf_fusion(vector_hits, keyword_hits)
+    if settings.RERANK_ENABLED:
+        merged = _rerank(query, merged)
+    return merged[:top_k]
+
+
+def _expand_context(hit: dict, window: int | None = None) -> str:
+    """把命中的小块扩展成父上下文：同源文档里前后各 window 块拼起来。"""
+    window = window if window is not None else settings.CONTEXT_WINDOW
+    source = hit.get("meta", {}).get("source")
+    chunk_index = hit.get("meta", {}).get("chunk_index")
+    if source is None or chunk_index is None:
+        return hit.get("doc", "")
+
+    same_source = [c for c in _get_chunks() if c["meta"].get("source") == source]
+    low = max(0, int(chunk_index) - window)
+    high = min(len(same_source), int(chunk_index) + window + 1)
+    return "\n".join(c["doc"] for c in same_source[low:high])
+
+
 def _redis_client():
-    if not settings.REDIS_URL:  # 没配 Redis 就不缓存
+    if not settings.REDIS_URL:
         return None
     global _redis
     if _redis is not None:
@@ -147,29 +181,26 @@ def _cache_set(key: str, value: str, ttl: int = 3600) -> None:
 
 
 def search(query: str) -> str:
-    """检索并返回拼好的资料文本。"""
+    """检索并返回拼好的、带引用的资料文本。"""
     if not query.strip():
         return ""
 
-    cache_key = "rag:" + hashlib.md5(query.encode("utf-8")).hexdigest()  # 问题做缓存键
-    cached = _cache_get(cache_key)  # 先查缓存
+    cache_key = "rag:" + hashlib.md5(query.encode("utf-8")).hexdigest()
+    cached = _cache_get(cache_key)
     if cached:
         return cached
 
-    vector_hits = _vector_search(query, top_k=5)               # 语义召回
-    keyword_hits = _bm25_search(query, top_k=5) if settings.HYBRID_SEARCH_ENABLED else []  # 关键词召回
-
-    if not vector_hits and not keyword_hits:
+    hits = retrieve(query, top_k=settings.FINAL_CONTEXT_K)
+    if not hits:
         return ""
 
-    merged = _rrf_fusion(vector_hits, keyword_hits)  # 两路召回融合
-    if settings.RERANK_ENABLED:
-        merged = _rerank(query, merged)              # 精排
-
     parts = []
-    for hit in merged[:2]:
-        source = hit.get("meta", {}).get("source") or ""  # 拼上来源，方便大模型引用
-        parts.append(f"[{source}]\n{hit['doc']}")
+    for hit in hits:
+        source = hit.get("meta", {}).get("source") or ""
+        chunk_index = hit.get("meta", {}).get("chunk_index")
+        context = _expand_context(hit)
+        parts.append(f"[{source}#{chunk_index}]\n{context}")
+
     result = "\n\n".join(parts)
     _cache_set(cache_key, result)
     return result
@@ -177,3 +208,4 @@ def search(query: str) -> str:
 
 def warmup() -> None:
     vector_store.warmup()
+    _get_chunks()

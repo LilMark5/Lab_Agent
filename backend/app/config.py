@@ -16,6 +16,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+# 知识库 Markdown 源文件目录。
+KB_DIR = BASE_DIR / "data" / "kb"
+
 # 文件上传限制：100MB，实际业务通常只允许图片。
 MAX_FILE_SIZE = 100 * 1024 * 1024
 
@@ -61,9 +64,17 @@ class Settings(BaseSettings):
     # RAG 使用的本地向量模型。第一次运行会自动下载，耗时可能较长。
     EMBEDDING_MODEL: str = "BAAI/bge-small-zh-v1.5"
     HF_ENDPOINT: str | None = None
+    # 文档切块：递归字符切分器的块大小与重叠量。
+    CHUNK_SIZE: int = 200
+    CHUNK_OVERLAP: int = 40
+    # 检索：每路召回 top-k、最终保留块数、父上下文扩展窗口。
+    RETRIEVAL_TOP_K: int = 5
+    FINAL_CONTEXT_K: int = 3
+    CONTEXT_WINDOW: int = 1
 
     # 向量库后端：auto / chroma / milvus。
     # milvus 使用 Milvus Lite（嵌入式文件模式，零运维，仍是真正的 Milvus）。
+    # pgvector：需要把 DATABASE_URL 指向启用 pgvector 扩展的 PostgreSQL。
     VECTOR_BACKEND: str = "auto"
     # 注意：不要叫 MILVUS_URI，pymilvus 会自动读同名环境变量并当作服务器地址。
     MILVUS_LOCAL_URI: str = "./data/milvus.db"
