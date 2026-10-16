@@ -173,6 +173,79 @@ async def _invoke_tool_with_retry(tool, args: dict) -> str:
     return json.dumps({"ok": False, "error": str(last_error)}, ensure_ascii=False)
 
 
+def _estimate_tokens(message: AnyMessage) -> int:
+    """轻量 token 估算：字符数 / 4 向上取整。
+
+    不引入 tiktoken（依赖重、且对中文分词不准），用「字符/4」做保守近似：
+    英文 1 token ≈ 4 字符，中文 1 token ≈ 1~1.5 字符，因此对中文这是
+    偏高的估计（更早触发裁剪），宁多剪不越界。工具调用参数也会计入，
+    避免大段检索结果被漏算。
+    """
+    content = getattr(message, "content", "") or ""
+    text = content if isinstance(content, str) else str(content)
+    extra = 0
+    tool_calls = getattr(message, "tool_calls", None)
+    if tool_calls:
+        extra += len(json.dumps(tool_calls, ensure_ascii=False, default=str))
+    return (len(text) + extra + 3) // 4
+
+
+def _trim_messages(messages: list[AnyMessage], budget_tokens: int) -> list[AnyMessage]:
+    """把消息裁剪进 token 预算，保证 model 不因超长而报错。
+
+    策略（TRIM_STRATEGY）：
+    - sliding_window（默认）：从最老的消息开始丢弃，保留最新的；
+    - summary：丢弃的早期消息用一条 HumanMessage 摘要占位（内容描述
+      「已省略 N 条更早的对话」），保留更久远的语义线索。
+
+    边界处理：
+    - 单条消息本身超过预算时不硬裁，直接返回（避免截断出残缺的 tool_calls）。
+    - 优先保护「AI 带 tool_calls + 其后紧邻的 ToolMessage」配对，避免把
+      工具调用和它的结果拆散，导致模型拿到没有结果的 tool_call 报错。
+    """
+    if not messages or budget_tokens <= 0:
+        return list(messages)
+
+    total = sum(_estimate_tokens(m) for m in messages)
+    if total <= budget_tokens:
+        return list(messages)
+
+    # 找出「AI 带 tool_calls」的位置，其后的 ToolMessage 与它绑定，裁剪时成组处理。
+    protected = set()
+    for i, m in enumerate(messages):
+        if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
+            j = i + 1
+            while j < len(messages) and isinstance(messages[j], ToolMessage):
+                protected.add(j)
+                j += 1
+    # 最新的那条（可能是 ToolMessage）也始终保留，它是本轮要回应的依据。
+    if messages:
+        protected.add(len(messages) - 1)
+
+    keep = list(messages)
+    strategy = settings.TRIM_STRATEGY
+    # 从最老（索引 0）向新裁剪；受保护的 ToolMessage 与它前面的 AI 一起保留。
+    dropped = 0
+    i = 0
+    while i < len(keep) and sum(_estimate_tokens(m) for m in keep) > budget_tokens:
+        if i in protected:
+            i += 1
+            continue
+        del keep[i]
+        dropped += 1
+        # 删除后索引整体前移，受保护索引需同步左移。
+        protected = {p - 1 if p > i else p for p in protected}
+
+    if strategy == "summary" and dropped > 0:
+        summary = HumanMessage(
+            content=f"[系统提示] 更早的 {dropped} 条对话因上下文长度已省略，"
+            "请仅基于下方仍然保留的内容回答。"
+        )
+        keep = [summary, *keep]
+
+    return keep
+
+
 async def build_agent(db: Session, current_user: User, include_uploaded: bool = True):
     """构建并编译带 checkpointer 的 LangGraph Agent。"""
     if not settings.LLM_API_KEY:
@@ -191,9 +264,9 @@ async def build_agent(db: Session, current_user: User, include_uploaded: bool = 
     async def agent_node(state: AgentState) -> dict:
         """agent 节点：调用大模型，返回新的 AI 消息。"""
         # system prompt 每次调用时注入，不放进 state，避免被 checkpointer 反复持久化。
-        response = await llm.ainvoke(
-            [SystemMessage(content=SYSTEM_PROMPT), *state["messages"]]
-        )
+        # 上下文窗口保护：送入模型前先按 token 预算裁剪历史，防止长对话撑爆 context。
+        history = _trim_messages(state["messages"], settings.MAX_CONTEXT_TOKENS)
+        response = await llm.ainvoke([SystemMessage(content=SYSTEM_PROMPT), *history])
         return {"messages": [response]}
 
     async def approval_node(state: AgentState) -> dict:

@@ -116,6 +116,16 @@ class Settings(BaseSettings):
     TOOL_TIMEOUT_SECONDS: float = 30.0
     TOOL_MAX_RETRIES: int = 1
 
+    # 上下文窗口保护：多轮对话 + 检索返回的大段父上下文会把 context 撑爆。
+    # MAX_CONTEXT_TOKENS 是送入 LLM 的消息 token 预算（不含 system prompt，
+    # 用字符/4 的轻量近似估算，避免引入 tiktoken 依赖、对中文更友好）。
+    # 超出预算时按 TRIM_STRATEGY 裁剪历史：
+    #   - sliding_window：保留最新消息，丢弃最早的，最省 token 也最稳；
+    #   - summary：把丢弃的早期对话压缩成一条摘要占位（更保上下文，但依赖
+    #     额外一次 LLM 调用、有额外延迟）。
+    MAX_CONTEXT_TOKENS: int = 4000
+    TRIM_STRATEGY: str = "sliding_window"
+
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",
         env_file_encoding="utf-8",
