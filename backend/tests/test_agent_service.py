@@ -168,3 +168,22 @@ def test_multiturn_does_not_duplicate_history(tmp_path, monkeypatch):
         await agent_service.close_checkpointer()
 
     asyncio.run(run())
+
+
+def test_checkpointer_sqlite_fallback_when_no_pg(tmp_path, monkeypatch):
+    """未配置 CHECKPOINT_DATABASE_URL 时回退 SQLite，且不触发 PG 导入。"""
+    monkeypatch.setattr(agent_service.settings, "CHECKPOINT_DATABASE_URL", None)
+    monkeypatch.setattr(
+        agent_service.settings, "CHECKPOINT_DB_PATH", str(tmp_path / "ckpt.db")
+    )
+    agent_service._checkpointer = None
+    agent_service._checkpointer_cm = None
+
+    async def run():
+        ckpt = await agent_service.get_checkpointer()
+        assert ckpt is not None
+        # SQLite 回退分支：checkpointer 实例是 AsyncSqliteSaver，而非 Postgres。
+        assert ckpt.__class__.__name__ == "AsyncSqliteSaver"
+        await agent_service.close_checkpointer()
+
+    asyncio.run(run())

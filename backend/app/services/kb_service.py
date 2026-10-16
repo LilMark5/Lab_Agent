@@ -21,6 +21,47 @@ _redis = None
 _chunks_cache: list[dict] | None = None
 _rerank_model = None
 _corpus_version = 0
+_rewrite_client = None
+
+# 查询改写用的 prompt：把口语化问句压缩成适合检索的关键词/短语，
+# 去掉寒暄与多余修饰，保留实体。输出纯文本，不要解释。
+_REWRITE_PROMPT = """把下面的问题改写成一个适合做检索的简短查询。
+要求：
+1. 只输出改写后的查询文本，不要解释、不要引号、不要序号。
+2. 保留关键实体（实验室名、设备名、日期、规则类别等）。
+3. 去掉寒暄和多余修饰词。
+
+问题：{question}
+"""
+
+
+def _rewrite_query(question: str) -> str:
+    """把口语化问句改写成检索友好的查询；失败或未启用时原样返回。"""
+    global _rewrite_client
+    if not settings.QUERY_REWRITE_ENABLED:
+        return question
+    if not settings.LLM_API_KEY:
+        return question
+    try:
+        if _rewrite_client is None:
+            from openai import OpenAI
+
+            _rewrite_client = OpenAI(
+                api_key=settings.LLM_API_KEY, base_url=settings.LLM_BASE_URL
+            )
+        resp = _rewrite_client.chat.completions.create(
+            model=settings.LLM_MODEL,
+            messages=[
+                {"role": "user", "content": _REWRITE_PROMPT.format(question=question)}
+            ],
+            temperature=0,
+            max_tokens=128,
+        )
+        rewritten = (resp.choices[0].message.content or "").strip()
+        return rewritten or question
+    except Exception as exc:
+        logger.warning("查询改写失败，回退原始问题：%s", exc)
+        return question
 
 
 def _get_chunks() -> list[dict]:
@@ -135,14 +176,22 @@ def _rerank(query: str, hits: list[dict]) -> list[dict]:
 
 
 def retrieve(query: str, top_k: int | None = None, document_id: str | None = None) -> list[dict]:
-    """检索主入口：返回融合 + 重排后的块命中列表。"""
+    """检索主入口：返回融合 + 重排后的块命中列表。
+
+    检索前先做查询改写（可配置），把口语化问句规范成检索词；
+    改写失败或未启用时回退原始问题，不影响可用性。
+    """
     if not query.strip():
         return []
     top_k = top_k or settings.RETRIEVAL_TOP_K
 
-    vector_hits = _vector_search(query, top_k=top_k, document_id=document_id)
+    search_query = _rewrite_query(query.strip())
+    if search_query != query.strip():
+        logger.info("查询改写：%r -> %r", query, search_query)
+
+    vector_hits = _vector_search(search_query, top_k=top_k, document_id=document_id)
     keyword_hits = (
-        _bm25_search(query, top_k=top_k, document_id=document_id)
+        _bm25_search(search_query, top_k=top_k, document_id=document_id)
         if settings.HYBRID_SEARCH_ENABLED
         else []
     )
@@ -151,7 +200,7 @@ def retrieve(query: str, top_k: int | None = None, document_id: str | None = Non
 
     merged = _rrf_fusion(vector_hits, keyword_hits)
     if settings.RERANK_ENABLED:
-        merged = _rerank(query, merged)
+        merged = _rerank(search_query, merged)
     return merged[:top_k]
 
 

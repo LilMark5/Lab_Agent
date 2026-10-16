@@ -10,7 +10,15 @@
 - **context_recall**：标准答案里的信息有多少被召回覆盖（需要 reference）。
 
 链路：``kb_service.retrieve`` 召回块 → 按父上下文窗口展开成 ``contexts``
-→ 用项目同一个大模型生成答案 → 交给 RAGAS 打分。
+→ 用**被测模型**（``LLM_MODEL``）生成答案 → 交给 RAGAS 用**裁判模型**打分。
+
+裁判 / 被测模型分离
+-------------------
+打分用的是裁判模型（judge），由 ``JUDGE_MODEL`` / ``JUDGE_API_KEY`` /
+``JUDGE_BASE_URL`` 三个环境变量控制，全部留空时回退到被测模型。
+为什么必须分离：评估的可靠性取决于裁判比被测更强、更稳定。让「考生自己
+阅卷」会引入系统性噪声——之前实测同一段答案重复打分能在 0.5~1.0 之间抖动。
+所以建议把裁判指向更强的模型（如 deepseek-reasoner / gpt-4o）。
 
 与线上 Agent 的差异（重要，别误读分数）
 ------------------------------------
@@ -261,6 +269,9 @@ async def _run(limit: int | None, concurrency: int, out_path: Path) -> int:
     print("RAG 生成质量评估（RAGAS）")
     print("=" * 72)
     print(f"模型        : {settings.LLM_MODEL} @ {settings.LLM_BASE_URL}")
+    print(f"裁判模型    : {settings.JUDGE_MODEL or settings.LLM_MODEL}")
+    if settings.JUDGE_MODEL is None:
+        print("              ⚠ 未配置 JUDGE_MODEL，裁判与被测同源，分数存在噪声")
     print(f"嵌入模型    : {settings.EMBEDDING_MODEL}")
     print(
         f"检索配置    : top_k={settings.FINAL_CONTEXT_K}  "
@@ -280,10 +291,18 @@ async def _run(limit: int | None, concurrency: int, out_path: Path) -> int:
         Faithfulness,
     )
 
+    # 被测模型：用它「生成答案」，模拟线上回答质量。
     client = AsyncOpenAI(api_key=settings.LLM_API_KEY, base_url=settings.LLM_BASE_URL)
+
+    # 裁判模型：独立配置，用于给答案打分。留空则回退被测模型（不推荐）。
+    judge_model = settings.JUDGE_MODEL or settings.LLM_MODEL
+    judge_api_key = settings.JUDGE_API_KEY or settings.LLM_API_KEY
+    judge_base_url = settings.JUDGE_BASE_URL or settings.LLM_BASE_URL
+    judge_client = AsyncOpenAI(api_key=judge_api_key, base_url=judge_base_url)
+
     llm = llm_factory(
-        settings.LLM_MODEL,
-        client=client,
+        judge_model,
+        client=judge_client,
         max_tokens=RAGAS_MAX_TOKENS,
         temperature=0,
     )
@@ -318,6 +337,7 @@ async def _run(limit: int | None, concurrency: int, out_path: Path) -> int:
         "config": {
             "llm_model": settings.LLM_MODEL,
             "llm_base_url": settings.LLM_BASE_URL,
+            "judge_model": settings.JUDGE_MODEL or settings.LLM_MODEL,
             "embedding_model": settings.EMBEDDING_MODEL,
             "retrieval_top_k": settings.FINAL_CONTEXT_K,
             "hybrid_search": settings.HYBRID_SEARCH_ENABLED,

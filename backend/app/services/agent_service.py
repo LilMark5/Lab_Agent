@@ -2,14 +2,14 @@
 
 相比初版的三处关键升级：
 1. 自定义 AgentState：messages + approval，为后续多智能体扩展留好位置。
-2. checkpointer 持久化：会话状态落盘到 SQLite，服务重启后仍可继续多轮对话，
-   用 thread_id 做会话隔离。
+2. checkpointer 持久化：会话状态落盘（SQLite 或 PostgreSQL），服务重启后仍可
+   继续多轮对话，用 thread_id 做会话隔离。
 3. human-in-the-loop：写库类工具通过 LangGraph interrupt 真正中断等待用户确认，
    而不是靠 system prompt 让模型“自觉”询问。
 
 注意：LangGraph 1.2 的 interrupt 语义是——invoke/astream 返回的 state 里带
 `__interrupt__` 键（不再抛 GraphInterrupt），恢复时用 Command(resume=...) 传入决策。
-异步流式必须使用 AsyncSqliteSaver，同步的 SqliteSaver 不支持 astream_events。
+异步流式必须使用 AsyncSqliteSaver / AsyncPostgresSaver（同步版不支持 astream_events）。
 """
 
 import json
@@ -99,20 +99,38 @@ TOOL_LABELS = {
 WRITE_TOOLS = {"create_lab_reservation"}
 
 
-# checkpointer 单例：进程内复用同一个 SQLite 连接，启动时建立、关闭时释放。
-_checkpointer: AsyncSqliteSaver | None = None
+# checkpointer 单例：进程内复用同一个连接，启动时建立、关闭时释放。
+# 后端可选：配置 CHECKPOINT_DATABASE_URL 用 PostgreSQL（生产推荐，多实例安全），
+# 否则回退 SQLite（零配置本地开发）。
+_checkpointer = None
 _checkpointer_cm = None
 
 
-async def get_checkpointer() -> AsyncSqliteSaver:
-    """懒加载全局 AsyncSqliteSaver，并保证目录存在。"""
+async def get_checkpointer():
+    """懒加载全局 checkpointer。
+
+    - 配置了 CHECKPOINT_DATABASE_URL → AsyncPostgresSaver（会话状态与业务库同源）。
+    - 否则 → AsyncSqliteSaver（本地文件，零配置）。
+    """
     global _checkpointer, _checkpointer_cm
-    if _checkpointer is None:
+    if _checkpointer is not None:
+        return _checkpointer
+
+    if settings.CHECKPOINT_DATABASE_URL:
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+        _checkpointer_cm = AsyncPostgresSaver.from_conn_string(
+            settings.CHECKPOINT_DATABASE_URL
+        )
+        _checkpointer = await _checkpointer_cm.__aenter__()
+        await _checkpointer.setup()
+        logger.info("checkpointer 已就绪：PostgreSQL")
+    else:
         path = Path(settings.CHECKPOINT_DB_PATH)
         path.parent.mkdir(parents=True, exist_ok=True)
         _checkpointer_cm = AsyncSqliteSaver.from_conn_string(str(path))
         _checkpointer = await _checkpointer_cm.__aenter__()
-        logger.info("checkpointer 已就绪：%s", path)
+        logger.info("checkpointer 已就绪：SQLite（%s）", path)
     return _checkpointer
 
 

@@ -71,3 +71,47 @@ def test_build_tools_respects_include_uploaded(monkeypatch):
     search_static = next(t for t in tools_static if t.name == "search_lab_docs")
     assert "用户上传" in (search_all.description or "")
     assert "不包含用户上传" in (search_static.description or "")
+
+
+def test_rewrite_query_disabled_returns_original(monkeypatch):
+    """关闭查询改写时，原样返回，且不发任何 LLM 请求。"""
+    monkeypatch.setattr(kb_service.settings, "QUERY_REWRITE_ENABLED", False)
+    assert kb_service._rewrite_query("实验室开放时间是几点") == "实验室开放时间是几点"
+
+
+def test_rewrite_query_falls_back_on_error(monkeypatch):
+    """LLM 调用失败时回退原始问题，不抛异常。"""
+    monkeypatch.setattr(kb_service.settings, "QUERY_REWRITE_ENABLED", True)
+    monkeypatch.setattr(kb_service.settings, "LLM_API_KEY", "sk-test")
+
+    class _BoomClient:
+        def __init__(self, *a, **k):
+            pass
+
+        @property
+        def chat(self):
+            raise RuntimeError("network down")
+
+    # _rewrite_query 内部是 `from openai import OpenAI`，直接换掉它。
+    import openai as openai_module
+
+    monkeypatch.setattr(openai_module, "OpenAI", _BoomClient)
+    monkeypatch.setattr(kb_service, "_rewrite_client", None)
+    q = "实验室开放时间是几点"
+    assert kb_service._rewrite_query(q) == q
+
+
+def test_retrieve_applies_rewrite(monkeypatch):
+    """检索入口确实用改写后的查询去召回。"""
+    captured = {}
+
+    monkeypatch.setattr(kb_service, "_rewrite_query", lambda q: "开放时间")
+    monkeypatch.setattr(kb_service.settings, "HYBRID_SEARCH_ENABLED", False)
+
+    def fake_vector(query, top_k=5, document_id=None):
+        captured["query"] = query
+        return []
+
+    monkeypatch.setattr(kb_service, "_vector_search", fake_vector)
+    kb_service.retrieve("实验室开放时间是几点")
+    assert captured["query"] == "开放时间"

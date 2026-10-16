@@ -61,6 +61,14 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str = "https://api.openai.com/v1"
     LLM_MODEL: str = "gpt-4o-mini"
 
+    # RAGAS 评估用的裁判模型（judge）。
+    # 评估的可靠性取决于裁判模型比被测模型更强、更稳定；让「考生自己阅卷」
+    # 会引入系统性噪声（同一段答案重复打分都会抖动）。因此裁判模型独立配置，
+    # 可指向更强的模型（如 deepseek-reasoner / gpt-4o）。留空则回退到被测模型。
+    JUDGE_MODEL: str | None = None
+    JUDGE_API_KEY: str | None = None
+    JUDGE_BASE_URL: str | None = None
+
     # RAG 使用的本地向量模型。第一次运行会自动下载，耗时可能较长。
     EMBEDDING_MODEL: str = "BAAI/bge-small-zh-v1.5"
     HF_ENDPOINT: str | None = None
@@ -84,6 +92,10 @@ class Settings(BaseSettings):
     RERANK_ENABLED: bool = True
     RERANK_MODEL: str = "BAAI/bge-reranker-base"
 
+    # 查询改写：检索前把口语化问句改写成规范检索词，提升召回。
+    # 依赖 LLM，未配置 key 或改写失败时自动回退原始问题。
+    QUERY_REWRITE_ENABLED: bool = False
+
     # Redis：用于 AI 接口限流与相似问题缓存。
     REDIS_URL: str | None = None
 
@@ -92,8 +104,11 @@ class Settings(BaseSettings):
     MCP_TRANSPORT: str = "streamable_http"
     MCP_URL: str = "http://127.0.0.1:8100/mcp"
 
-    # LangGraph checkpointer：会话状态持久化到本地 SQLite。
-    # 生产可替换为 PostgreSQL（langgraph-checkpoint-postgres）。
+    # LangGraph checkpointer：会话状态持久化。
+    # 有 CHECKPOINT_DATABASE_URL（psycopg3 格式，如 postgresql://...）时用
+    # PostgreSQL 后端（生产推荐，支持多实例、会话状态与业务库同源）；
+    # 否则回退本地 SQLite，保证零配置也能跑。
+    CHECKPOINT_DATABASE_URL: str | None = None
     CHECKPOINT_DB_PATH: str = str(BASE_DIR / "data" / "checkpoints.db")
 
     model_config = SettingsConfigDict(
