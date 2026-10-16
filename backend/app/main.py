@@ -17,7 +17,7 @@ from app.common.exceptions import (
     http_exception_handler,
     validation_exception_handler,
 )
-from app.config import UPLOAD_DIR
+from app.config import UPLOAD_DIR, settings
 from app.database import Base, engine
 from app.init_data import seed_if_empty
 from app.models import equipment, lab, reservation, user  # noqa: F401
@@ -29,8 +29,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用启动/关闭时执行的生命周期逻辑。"""
-    # 1. 建表并写入演示数据。
-    Base.metadata.create_all(bind=engine)
+    # 1. 表结构：Postgres 走 Alembic（alembic upgrade head），SQLite 零配置仍用 create_all。
+    if not settings.DATABASE_URL:
+        Base.metadata.create_all(bind=engine)
     seed_if_empty()
 
     # 2. 预热向量库，把模型加载成本放在启动阶段。

@@ -84,8 +84,16 @@ REDIS_URL=
 
 ### 4. 启动后端
 
+使用 PostgreSQL 时，首次启动前先执行数据库迁移：
+
 ```powershell
-uvicorn app.main:app --reload --reload-dir app --port 8000 --host 127.0.0.1
+.\.venv-clean\Scripts\python.exe -m alembic upgrade head
+```
+
+SQLite（`DATABASE_URL` 留空）无需这步，启动时会自动建表。
+
+```powershell
+.\.venv-clean\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000 --host 127.0.0.1
 ```
 
 启动后：
@@ -93,7 +101,7 @@ uvicorn app.main:app --reload --reload-dir app --port 8000 --host 127.0.0.1
 - 接口文档：<http://127.0.0.1:8000/docs>
 - 健康检查：<http://127.0.0.1:8000/>
 
-首次启动会自动建表并写入演示数据：
+首次启动会自动写入演示数据（PostgreSQL 需先执行上面的迁移）：
 
 | 角色 | 账号 | 密码 |
 | --- | --- | --- |

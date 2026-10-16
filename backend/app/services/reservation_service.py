@@ -36,7 +36,9 @@ def create_reservation(
     if data.date == current_date and data.start_time < current_time:
         raise BusinessException(message="预约开始时间不能小于当前的时间")
 
-    lab = db.query(Lab).filter(Lab.id == data.lab_id).first()
+    # 先锁住实验室行：并发预约同一实验室时串行执行，避免“先查冲突再插入”的竞态。
+    # Postgres 下会生成 SELECT ... FOR UPDATE；SQLite 忽略该子句，靠写锁串行。
+    lab = db.query(Lab).filter(Lab.id == data.lab_id).with_for_update().first()
     if not lab:
         raise BusinessException(message="实验室不存在")
     if lab.status != 1:
