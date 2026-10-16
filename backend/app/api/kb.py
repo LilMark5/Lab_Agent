@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.common.exceptions import BusinessException
 from app.common.response import Response
 from app.database import get_db
-from app.dependencies.auth import get_current_user
+from app.dependencies.auth import get_current_admin
 from app.models.user import User
 from app.services import kb_document_service, kb_parser, kb_service
 
@@ -31,7 +31,7 @@ def _doc_dict(document) -> dict:
 @router.post("/documents")
 async def upload_document(
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     if not file.filename:
@@ -53,7 +53,7 @@ async def upload_document(
 
 @router.get("/documents")
 def list_documents(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     documents = kb_document_service.list_documents(db)
@@ -63,7 +63,7 @@ def list_documents(
 @router.delete("/documents/{document_id}")
 def delete_document(
     document_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     kb_document_service.delete_document(db, document_id)
@@ -74,7 +74,7 @@ def delete_document(
 def search_document(
     document_id: str,
     query: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     text = kb_service.search_document(document_id, query)
