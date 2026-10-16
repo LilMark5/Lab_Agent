@@ -180,6 +180,9 @@ python evaluate_rag.py
 - `GET /api/kb/documents/{id}/search?query=`：在指定文档内检索并带引用。
 - `DELETE /api/kb/documents/{id}`：删除文档并同步清理其全部向量。
 
+上传的文档会进入混合检索（向量召回 + BM25 关键词召回 + rerank），
+AI 助手回答时会按文件名注明来源，例如「根据《量子计算平台说明.md》」。
+
 ## 七、常见问题排查
 
 | 现象 | 原因 | 解决 |

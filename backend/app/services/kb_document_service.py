@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.common.exceptions import BusinessException
 from app.models.kb_document import KbDocument
-from app.services import kb_chunking, kb_parser, vector_store
+from app.services import kb_chunking, kb_parser, kb_service, vector_store
 
 
 def ingest_document(
@@ -48,6 +48,7 @@ def ingest_document(
             raise BusinessException(message="向量库不可用")
         chunks = kb_chunking.chunk_document_text(document.id, filename, text)
         store.add_chunks(chunks)
+        kb_service.invalidate_cache()
     except Exception as exc:
         document.status = "failed"
         document.error = str(exc)[:500]
@@ -64,6 +65,7 @@ def delete_document(db: Session, document_id: str) -> None:
     store = vector_store.get_vector_store()
     if store is not None:
         store.delete_chunks(document_id)
+    kb_service.invalidate_cache()
     db.delete(document)
     db.commit()
 

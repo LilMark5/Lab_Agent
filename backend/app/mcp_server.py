@@ -33,7 +33,7 @@ def build_mcp_server():
 
     @mcp.tool()
     def search_lab_docs(query: str) -> str:
-        """检索实验室知识库（预约规则、开放时间、安全规范、设备说明）。"""
+        """检索知识库（内置文档与用户上传文档，含预约规则、开放时间、安全规范等）。"""
         result = kb_service.search(query)
         return result or "没有检索到相关资料"
 

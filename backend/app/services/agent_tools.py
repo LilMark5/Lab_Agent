@@ -74,7 +74,7 @@ def build_tools(db: Session, current_user: User):
 
     @langchain_tool
     def search_lab_docs(query: str) -> str:
-        """根据用户的提问检索实验室知识库。"""
+        """根据用户的提问检索知识库，包含系统内置文档和用户上传的文档。"""
         try:
             return kb_service.search(query) or "没有检索到相关的资料"
         except Exception as exc:

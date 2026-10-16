@@ -13,3 +13,32 @@ def test_rrf_fusion_keys_by_chunk_id():
     assert len(merged) == 2
     by_id = {hit["id"]: hit for hit in merged}
     assert by_id["a#0"]["rrf"] > by_id["b#0"]["rrf"]
+
+
+class _FakeStore:
+    """只实现 list_chunks 的假向量库，用于验证语料来源。"""
+
+    def list_chunks(self):
+        return [
+            {
+                "id": "doc1#0",
+                "doc": "量子计算平台每周一开放",
+                "meta": {"source": "量子.md", "chunk_index": 0, "document_id": "doc1"},
+            }
+        ]
+
+
+def test_chunks_come_from_vector_store(monkeypatch):
+    kb_service.invalidate_cache()
+    monkeypatch.setattr(kb_service.vector_store, "get_vector_store", lambda: _FakeStore())
+    chunks = kb_service._get_chunks()
+    assert chunks[0]["meta"]["document_id"] == "doc1"
+    kb_service.invalidate_cache()
+
+
+def test_bm25_covers_uploaded_document(monkeypatch):
+    kb_service.invalidate_cache()
+    monkeypatch.setattr(kb_service.vector_store, "get_vector_store", lambda: _FakeStore())
+    hits = kb_service._bm25_search("量子计算", top_k=3)
+    assert any(hit["meta"]["document_id"] == "doc1" for hit in hits)
+    kb_service.invalidate_cache()

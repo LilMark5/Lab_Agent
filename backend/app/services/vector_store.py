@@ -99,6 +99,19 @@ class ChromaVectorStore:
         col = self._ensure()
         col.delete(where={"document_id": document_id})
 
+    def list_chunks(self) -> list[dict]:
+        col = self._ensure()
+        if col.count() == 0:
+            return []
+        res = col.get(include=["documents", "metadatas"])
+        ids = res.get("ids") or []
+        docs = res.get("documents") or []
+        metas = res.get("metadatas") or []
+        return [
+            {"id": i, "doc": d, "meta": m or {}}
+            for i, d, m in zip(ids, docs, metas)
+        ]
+
     def count(self) -> int:
         return int(self._ensure().count())
 
@@ -187,6 +200,30 @@ class MilvusVectorStore:
     def delete_chunks(self, document_id: str) -> None:
         client = self._ensure()
         client.delete(collection_name=self.COLLECTION, filter=f'document_id == "{document_id}"')
+
+    def list_chunks(self) -> list[dict]:
+        client = self._ensure()
+        try:
+            rows = client.query(
+                collection_name=self.COLLECTION,
+                filter="",
+                output_fields=["pk", "text", "source", "chunk_index", "document_id"],
+                limit=16384,
+            )
+        except Exception:
+            return []
+        return [
+            {
+                "id": row.get("pk", ""),
+                "doc": row.get("text", ""),
+                "meta": {
+                    "source": row.get("source", ""),
+                    "chunk_index": row.get("chunk_index"),
+                    "document_id": row.get("document_id"),
+                },
+            }
+            for row in rows
+        ]
 
     def count(self) -> int:
         client = self._ensure()
@@ -335,6 +372,29 @@ class PgVectorStore:
                 text(f"DELETE FROM {self.TABLE} WHERE document_id = :d"),
                 {"d": document_id},
             )
+
+    def list_chunks(self) -> list[dict]:
+        from sqlalchemy import text
+
+        engine = self._ensure()
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    f"SELECT id, text, source, chunk_index, document_id FROM {self.TABLE}"
+                )
+            ).mappings().all()
+        return [
+            {
+                "id": row["id"],
+                "doc": row["text"],
+                "meta": {
+                    "source": row["source"],
+                    "chunk_index": row["chunk_index"],
+                    "document_id": row["document_id"],
+                },
+            }
+            for row in rows
+        ]
 
     def count(self) -> int:
         from sqlalchemy import text

@@ -20,14 +20,34 @@ logger = logging.getLogger(__name__)
 _redis = None
 _chunks_cache: list[dict] | None = None
 _rerank_model = None
+_corpus_version = 0
 
 
 def _get_chunks() -> list[dict]:
-    """知识库块的内存缓存；文件是静态的，缓存一次即可。"""
+    """检索语料缓存：直接取向量库里的全部块（含静态知识库和上传文档）。
+
+    这样 BM25 关键词召回也能覆盖动态上传的文档。向量库不可用时回退静态文件。
+    """
     global _chunks_cache
     if _chunks_cache is None:
+        store = vector_store.get_vector_store()
+        if store is not None:
+            try:
+                chunks = store.list_chunks()
+                if chunks:
+                    _chunks_cache = chunks
+                    return _chunks_cache
+            except Exception as exc:
+                logger.warning("从向量库读取块失败，回退静态文件：%s", exc)
         _chunks_cache = kb_chunking.load_kb_chunks()
     return _chunks_cache
+
+
+def invalidate_cache() -> None:
+    """文档新增/删除后清空语料缓存，并让 Redis 缓存键失效。"""
+    global _chunks_cache, _corpus_version
+    _chunks_cache = None
+    _corpus_version += 1
 
 
 def _tokenize(text: str) -> list[str]:
@@ -198,7 +218,7 @@ def search(query: str) -> str:
     if not query.strip():
         return ""
 
-    cache_key = "rag:" + hashlib.md5(query.encode("utf-8")).hexdigest()
+    cache_key = f"rag:v{_corpus_version}:" + hashlib.md5(query.encode("utf-8")).hexdigest()
     cached = _cache_get(cache_key)
     if cached:
         return cached
