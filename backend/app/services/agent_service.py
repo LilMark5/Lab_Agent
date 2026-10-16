@@ -156,7 +156,7 @@ async def build_agent(db: Session, current_user: User, include_uploaded: bool = 
     if not settings.LLM_API_KEY:
         raise BusinessException(message="未配置大模型 API Key")
 
-    tools = agent_tools.build_tools(db, current_user, include_uploaded=include_uploaded)
+    tools = await agent_tools.build_tools(db, current_user, include_uploaded=include_uploaded)
     tools_by_name = {tool.name: tool for tool in tools}
     llm = ChatOpenAI(
         api_key=settings.LLM_API_KEY,

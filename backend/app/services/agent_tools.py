@@ -24,27 +24,30 @@ except Exception:
     langchain_tool = None
     TOOL_DECORATOR_AVAILABLE = False
 
-# MCP 工具缓存：只尝试连接一次，失败后回退本地工具，避免每个请求都重连。
-_mcp_cache = {"tried": False, "client": None, "tools": None}
+# MCP 工具缓存：连接失败回退本地工具。用 asyncio.Lock 防止并发请求重复加载。
+_mcp_cache = {"tried": False, "tools": None}
+_mcp_lock = asyncio.Lock()
 
 
-def _load_mcp_tools():
-    """从独立 MCP Server 加载读工具。不可用时返回 None。"""
+async def _load_mcp_tools():
+    """从独立 MCP Server 加载读工具。不可用时返回 None。
+
+    这是异步函数：`build_tools` 在 `build_agent`（async）里被调用，
+    而 MCP 客户端需要 asyncio 事件循环来建立连接，所以这里直接 `await`。
+    之前的实现用 `asyncio.get_running_loop()` 探测 async 上下文，
+    若在 async 里就 return None——导致流式场景下 MCP 工具永远加载不到。
+    """
     if not settings.MCP_ENABLED:
         return None
     if _mcp_cache["tried"]:
         return _mcp_cache["tools"]
-    _mcp_cache["tried"] = True
-    try:
-        asyncio.get_running_loop()
-        # 已经在 async 上下文里，不能再 asyncio.run；跳过 MCP，走本地工具。
-        return None
-    except RuntimeError:
-        pass
-    try:
-        from langchain_mcp_adapters.client import MultiServerMCPClient
+    async with _mcp_lock:
+        # 双重检查：拿锁期间可能已被其它协程加载过。
+        if _mcp_cache["tried"]:
+            return _mcp_cache["tools"]
+        try:
+            from langchain_mcp_adapters.client import MultiServerMCPClient
 
-        async def _get_tools():
             client = MultiServerMCPClient(
                 {
                     "lab": {
@@ -54,17 +57,15 @@ def _load_mcp_tools():
                 }
             )
             tools = await client.get_tools()
-            return client, tools
-
-        client, tools = asyncio.run(_get_tools())
-        _mcp_cache["client"] = client
-        _mcp_cache["tools"] = tools
-        return tools
-    except Exception:
-        return None
+            _mcp_cache["tools"] = tools
+            _mcp_cache["tried"] = True
+            return tools
+        except Exception:
+            _mcp_cache["tried"] = True
+            return None
 
 
-def build_tools(db: Session, current_user: User, include_uploaded: bool = True):
+async def build_tools(db: Session, current_user: User, include_uploaded: bool = True):
     """根据当前请求的 db 和用户构建工具列表。
 
     把 db、current_user 用闭包传进去，工具函数内部就不用每次传 Session。
@@ -184,7 +185,7 @@ def build_tools(db: Session, current_user: User, include_uploaded: bool = True):
         return datetime.now().strftime("%Y-%m-%d")
 
     # 优先使用 MCP 里的读工具，写工具和日期工具仍在本地（带鉴权）。
-    mcp_tools = _load_mcp_tools()
+    mcp_tools = await _load_mcp_tools()
     if mcp_tools:
         return [*mcp_tools, create_lab_reservation, get_today]
 

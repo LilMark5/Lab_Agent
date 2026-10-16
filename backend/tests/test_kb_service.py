@@ -1,5 +1,6 @@
 """检索融合逻辑的单元测试。"""
 
+import asyncio
 from types import SimpleNamespace
 
 from app.services import kb_service
@@ -64,8 +65,12 @@ def test_build_tools_respects_include_uploaded(monkeypatch):
     monkeypatch.setattr(agent_tools.settings, "MCP_ENABLED", False)
     user = SimpleNamespace(id=1, role="student")
 
-    tools_all = agent_tools.build_tools(None, user, include_uploaded=True)
-    tools_static = agent_tools.build_tools(None, user, include_uploaded=False)
+    tools_all = asyncio.run(
+        agent_tools.build_tools(None, user, include_uploaded=True)
+    )
+    tools_static = asyncio.run(
+        agent_tools.build_tools(None, user, include_uploaded=False)
+    )
 
     search_all = next(t for t in tools_all if t.name == "search_lab_docs")
     search_static = next(t for t in tools_static if t.name == "search_lab_docs")
@@ -115,3 +120,35 @@ def test_retrieve_applies_rewrite(monkeypatch):
     monkeypatch.setattr(kb_service, "_vector_search", fake_vector)
     kb_service.retrieve("实验室开放时间是几点")
     assert captured["query"] == "开放时间"
+
+
+def test_load_mcp_tools_works_in_async_context(monkeypatch):
+    """流式场景（async 上下文）下 MCP 工具应能正常加载，不再返回 None。"""
+    from app.services import agent_tools
+
+    monkeypatch.setattr(agent_tools.settings, "MCP_ENABLED", True)
+    agent_tools._mcp_cache["tried"] = False
+    agent_tools._mcp_cache["tools"] = None
+
+    class _FakeTool:
+        def __init__(self, name):
+            self.name = name
+
+    class _FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def get_tools(self):
+            return [_FakeTool("mcp_list_labs")]
+
+    import langchain_mcp_adapters.client as client_mod
+
+    monkeypatch.setattr(client_mod, "MultiServerMCPClient", _FakeClient)
+
+    tools = asyncio.run(agent_tools._load_mcp_tools())
+    assert tools is not None
+    assert [t.name for t in tools] == ["mcp_list_labs"]
+    # 结果已缓存，二次调用直接命中缓存，不再新建连接。
+    agent_tools._mcp_cache["tried"] = True
+    cached = asyncio.run(agent_tools._load_mcp_tools())
+    assert cached == tools
