@@ -111,6 +111,11 @@ class Settings(BaseSettings):
     CHECKPOINT_DATABASE_URL: str | None = None
     CHECKPOINT_DB_PATH: str = str(BASE_DIR / "data" / "checkpoints.db")
 
+    # Agent 工具调用健壮性：单次工具调用的超时秒数、失败重试次数。
+    # 超时防止 DB 慢查询拖垮整张图；重试只针对临时性故障（网络抖动等）。
+    TOOL_TIMEOUT_SECONDS: float = 30.0
+    TOOL_MAX_RETRIES: int = 1
+
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",
         env_file_encoding="utf-8",

@@ -12,6 +12,7 @@
 异步流式必须使用 AsyncSqliteSaver / AsyncPostgresSaver（同步版不支持 astream_events）。
 """
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -151,6 +152,27 @@ def _route_after_agent(state: AgentState) -> str:
     return "end"
 
 
+async def _invoke_tool_with_retry(tool, args: dict) -> str:
+    """执行工具：线程池里跑（避免阻塞事件循环），带超时与有限重试。
+
+    - 超时兜底：DB 慢查询或外部调用卡住时，不让它拖垮整张图。
+    - 重试：只针对临时性故障重试有限次，最终失败再回填错误 JSON 给模型自纠。
+    """
+    last_error: Exception | None = None
+    for attempt in range(settings.TOOL_MAX_RETRIES + 1):
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(tool.invoke, args),
+                timeout=settings.TOOL_TIMEOUT_SECONDS,
+            )
+            return result.content if hasattr(result, "content") else str(result)
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if attempt < settings.TOOL_MAX_RETRIES:
+                await asyncio.sleep(0.2 * (attempt + 1))
+    return json.dumps({"ok": False, "error": str(last_error)}, ensure_ascii=False)
+
+
 async def build_agent(db: Session, current_user: User, include_uploaded: bool = True):
     """构建并编译带 checkpointer 的 LangGraph Agent。"""
     if not settings.LLM_API_KEY:
@@ -208,15 +230,7 @@ async def build_agent(db: Session, current_user: User, include_uploaded: bool = 
             elif tool is None:
                 content = f"未找到工具：{name}"
             else:
-                try:
-                    result = tool.invoke(args)
-                    content = (
-                        result.content if hasattr(result, "content") else str(result)
-                    )
-                except Exception as exc:
-                    content = json.dumps(
-                        {"ok": False, "error": str(exc)}, ensure_ascii=False
-                    )
+                content = await _invoke_tool_with_retry(tool, args)
 
             messages.append(
                 ToolMessage(

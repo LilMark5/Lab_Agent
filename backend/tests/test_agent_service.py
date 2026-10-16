@@ -187,3 +187,63 @@ def test_checkpointer_sqlite_fallback_when_no_pg(tmp_path, monkeypatch):
         await agent_service.close_checkpointer()
 
     asyncio.run(run())
+
+
+def test_invoke_tool_with_retry_succeeds(monkeypatch):
+    """工具一次成功：直接返回结果内容。"""
+    calls = {"n": 0}
+
+    class FakeResult:
+        content = "查询到 3 个实验室"
+
+    class FakeTool:
+        def invoke(self, args):
+            calls["n"] += 1
+            return FakeResult()
+
+    async def run():
+        out = await agent_service._invoke_tool_with_retry(FakeTool(), {})
+        assert out == "查询到 3 个实验室"
+
+    asyncio.run(run())
+    assert calls["n"] == 1
+
+
+def test_invoke_tool_with_retry_retries_then_fails(monkeypatch):
+    """工具连续失败：按 TOOL_MAX_RETRIES 重试后，回填错误 JSON 给模型自纠。"""
+    monkeypatch.setattr(agent_service.settings, "TOOL_MAX_RETRIES", 2)
+    calls = {"n": 0}
+
+    class FakeTool:
+        def invoke(self, args):
+            calls["n"] += 1
+            raise RuntimeError("db timeout")
+
+    async def run():
+        out = await agent_service._invoke_tool_with_retry(FakeTool(), {})
+        assert '"ok": false' in out
+        assert "db timeout" in out
+
+    asyncio.run(run())
+    # 初次 + 2 次重试 = 3 次调用。
+    assert calls["n"] == 3
+
+
+def test_invoke_tool_with_retry_recovers_on_second_try(monkeypatch):
+    """工具第一次失败、第二次成功：应重试后返回成功结果。"""
+    monkeypatch.setattr(agent_service.settings, "TOOL_MAX_RETRIES", 1)
+    calls = {"n": 0}
+
+    class FakeTool:
+        def invoke(self, args):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("transient")
+            return SimpleNamespace(content="恢复成功")
+
+    async def run():
+        out = await agent_service._invoke_tool_with_retry(FakeTool(), {})
+        assert out == "恢复成功"
+
+    asyncio.run(run())
+    assert calls["n"] == 2

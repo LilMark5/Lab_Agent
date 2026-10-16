@@ -59,6 +59,8 @@ def create_reservation(
 
     # 冲突判断采用区间重叠算法：已有 A 与 新 B 重叠，
     # 当且仅当 A.start < B.end 且 A.end > B.start。
+    # 该检测覆盖 status in [0,1]（待审核 + 已通过），配合 with_for_update 行锁，
+    # 天然具备「重复预订防护」的幂等性——同一时段重复提交会命中冲突而拒绝。
     query = db.query(Reservation).filter(
         Reservation.lab_id == data.lab_id,
         Reservation.date == data.date,
