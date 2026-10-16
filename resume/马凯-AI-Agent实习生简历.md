@@ -14,25 +14,25 @@
 
 ## 专业技能
 
-- **后端**：Python、FastAPI、SQLAlchemy、JWT 鉴权、统一响应与全局异常、文件上传
-- **数据库**：MySQL、PostgreSQL、Redis，熟悉事务、索引、分页查询
-- **AI 工程**：LangChain、LangGraph、RAG、Function Calling、MCP、ReAct、Embedding、Milvus、SSE
-- **检索**：向量检索 + BM25 + RRF 融合 + rerank 重排，会用命中率指标评估检索质量
-- **前端**：Vue3、Vite、Element Plus、axios、TypeScript（基础）
-- **工程化**：Docker、Docker Compose、Nginx、Git、Linux 常用命令
+- **后端**：Python、FastAPI、SQLAlchemy、Alembic、JWT 鉴权、统一响应与全局异常、文件上传
+- **数据库**：PostgreSQL、SQLite、Redis（限流/缓存），熟悉事务、索引、并发控制（SELECT FOR UPDATE）
+- **AI 工程**：LangChain、LangGraph（ReAct / checkpointer 会话持久化 / interrupt 人工审批）、RAG、Function Calling、MCP、Embedding、SSE 流式
+- **检索与评估**：递归切块、向量召回 + BM25 + RRF 融合 + rerank 重排；ChromaDB / pgvector 实跑，Milvus 了解；会用 Hit@K / MRR / nDCG / RAGAS 评估检索与生成质量
+- **前端**：Vue3、Vite、Element Plus、axios（TypeScript 了解）
+- **工程化**：Git、Linux 常用命令、Docker（了解）
 
 ## 项目经历
 
 ### 智能实验室预约系统 · AI Agent 全栈项目
 
-独立开发　|　FastAPI + Vue3 + LangGraph + Milvus + MCP
+独立开发　|　FastAPI + Vue3 + LangGraph + pgvector + MCP
 
-- 从零实现 FastAPI + Vue3 的实验室预约业务闭环：用户登录注册、实验室/设备管理、预约提交与管理员审核，后端采用 API / Service / Model / Schema 分层，实现 JWT 鉴权、统一响应与全局异常处理。
-- 基于 LangGraph 构建 ReAct 风格 Agent，模型自主决定调用知识检索、实验室查询、预约落库等工具，多轮工具循环受 `recursion_limit` 约束，写库前强制用户确认，避免误操作。
-- 实现 RAG 检索：向量召回 + BM25 关键词召回 + RRF 融合 + bge-reranker 精排，向量库抽象为 ChromaDB / Milvus 双后端，并用 Redis 缓存相似问题、对 AI 接口做限流。
-- 将实验室查询能力封装为独立 MCP Server，Agent 通过 langchain-mcp-adapters 接入，实现工具与业务解耦。
-- 使用 SSE 实现流式输出，前端实时展示“思考 / 查库 / 提交预约”过程；编写检索评估脚本统计 hit@2，验证混合检索相对纯向量检索的提升。
-- 使用 Docker Compose 编排 PostgreSQL(pgvector) + Redis + 后端 + 前端，实现一键部署。
+- 从零实现 FastAPI + Vue3 的业务闭环（登录注册、实验室/设备管理、预约提交与管理员审核）：API / Service / Model / Schema 分层，JWT 鉴权、统一响应与全局异常，共 31 个接口；用 Alembic 管理数据库迁移，预约并发场景用 SELECT FOR UPDATE 防止重复预订，配套并发集成测试。
+- 基于 LangGraph 构建 ReAct Agent：模型自主决定调用知识检索、实验室查询、预约落库等工具；用 checkpointer 将会话状态持久化（服务重启后可继续多轮对话），写库类操作通过 interrupt 中断等待用户确认、确认后用 Command(resume) 恢复执行；为审批闭环、多轮历史不重复等关键行为补了确定性集成测试。
+- 实现完整 RAG 管线：递归切块 → 向量召回 + BM25 关键词召回 → RRF 融合 → 交叉编码器精排 → 命中块扩展父上下文并带引用；向量库抽象为 ChromaDB / pgvector / Milvus 三后端统一接口，pgvector 侧采用 HNSW 索引并实跑全链路验证（embedding 维度变化自动重建）。
+- 建立离线评估体系：检索侧评 Hit@1/3、MRR、nDCG，生成侧接入 RAGAS 四指标（faithfulness / answer_relevancy / context_precision / context_recall），自建 14 条标注用例（含「资料没有时不许编造」的拒答边界）；通过对照实验定位出检索指标饱和、判官模型噪声、context_precision 排序口径三个评测陷阱，形成评估文档。
+- 将实验室查询能力封装为独立 MCP Server（FastMCP，streamable-http），Agent 经 langchain-mcp-adapters 接入，MCP 不可用时自动回退本地工具，实现工具与业务解耦。
+- 用 SSE 实现流式输出：前端 fetch + ReadableStream 逐帧解析「思考 / 查库 / 等待审批」过程，配合 DOMPurify 渲染 Markdown 防 XSS；接入 Redis（可选依赖）做 AI 接口限流与检索结果缓存，按语料版本自动失效，未配置时优雅降级不影响本地开发。
 
 ### 其他项目（按需补充）
 
