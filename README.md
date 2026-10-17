@@ -24,6 +24,50 @@
 | MySQL/PostgreSQL | 可选 | 默认 SQLite 零配置 |
 | Docker | 可选 | 一键部署用 |
 
+## 一之bis、⚡ 快速启动（TL;DR）
+
+依赖已装好的机器，两个终端各一条命令：
+
+```powershell
+# 终端 1：后端（SQLite 零配置，不需要 PostgreSQL）
+cd backend
+$env:DATABASE_URL=""; $env:VECTOR_BACKEND="chroma"
+.\.venv-clean\Scripts\python.exe -m uvicorn app.main:app --port 8000 --host 127.0.0.1
+
+# 终端 2：前端
+cd frontend
+npm run dev
+```
+
+打开 <http://127.0.0.1:5173/>，用 `admin / 123456`（管理员）或 `student / 123456`（学生）登录。
+也可以直接双击仓库根目录的 `start-dev.ps1`，它会开两个窗口把前后端一起拉起来。
+
+> **⚠️ 最容易卡住的地方**：`backend/.env` 里默认写的是
+> `DATABASE_URL=postgresql+psycopg2://...@127.0.0.1:5432/lab_agent` 和
+> `VECTOR_BACKEND=pgvector`。**没装 PostgreSQL（也没 Docker）的机器直接启动会失败**，
+> 报 `OperationalError: Connection refused`（5432 端口没人听）。
+>
+> 两条路选一条：
+> 1. **不装 PG（推荐先用这个跑通）**：把 `DATABASE_URL=` 留空 → 自动用
+>    `backend/lab_agent.db`（SQLite，启动时自动建表并灌演示数据），
+>    同时 `VECTOR_BACKEND=chroma`。上面的 `$env:` 覆盖就是干这个的。
+> 2. **要用 PG + pgvector**：先起 PostgreSQL，建库 `lab_agent`，装 pgvector 扩展，
+>    再执行 `alembic upgrade head`，最后正常启动。
+>
+> 判据：日志出现 `Application startup complete` 就是连上了；
+> 出现 `向量库预热超时` 不是错误，只是首个 RAG 请求会慢几秒。
+
+启动后建议按这个顺序验收（都是实测跑通的）：
+
+| 步骤 | 操作 | 预期 |
+| --- | --- | --- |
+| 1 | 打开 <http://127.0.0.1:8000/docs> | Swagger 文档，27 个接口 |
+| 2 | 登录 `student / 123456` | 返回 token |
+| 3 | AI 助手问「实验室开放时间是几点？」 | 命中《开放时间.md》并带来源表格 |
+| 4 | AI 助手问「现在有哪些开放的实验室？」 | 调用 `list_open_labs` 查库返回 4 间 |
+| 5 | 「帮我预约明天下午 14-16 点的人工智能实验室」→ 再回「确认」 | 弹出**操作确认框**（LangGraph interrupt）；点取消则**不写库** |
+| 6 | 可选：`python -m app.mcp_server` | 8100 端口起 MCP，暴露 3 个只读工具 |
+
 ## 二、后端安装与运行
 
 ### 1. 进入后端目录并创建虚拟环境
