@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { ElMessage } from 'element-plus'
 
 import { getToken, getUser } from '@/utils/auth'
 
@@ -75,8 +76,10 @@ router.beforeEach((to) => {
   if (to.path === '/login' && token) {
     return { path: '/manager/home' }
   }
-  // 管理员专属页面：非 admin 角色重定向回首页。
+  // 管理员专属页面：非 admin 角色重定向回首页，并给出提示，
+  // 否则用户点了菜单/输错 URL 只会被静默踢回首页，看起来像"没反应"。
   if (to.meta.admin && getUser()?.role !== 'admin') {
+    ElMessage.warning('该页面仅管理员可见')
     return { path: '/manager/home' }
   }
   return true

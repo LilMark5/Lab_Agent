@@ -46,7 +46,7 @@
           <span>AI智能助手</span>
         </el-menu-item>
 
-        <el-menu-item index="/manager/kb-manage">
+        <el-menu-item v-if="userInfo?.role === 'admin'" index="/manager/kb-manage">
           <el-icon><Collection /></el-icon>
           <span>知识库管理</span>
         </el-menu-item>
