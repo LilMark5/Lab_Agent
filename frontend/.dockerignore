@@ -1,0 +1,8 @@
+# 构建前端镜像时排除本地依赖与产物，COPY 时只带源码。
+
+node_modules/
+dist/
+.git
+.gitignore
+*.log
+.DS_Store

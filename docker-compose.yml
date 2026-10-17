@@ -28,6 +28,10 @@ services:
 
   backend:
     build: ./backend
+    # PG 模式下 main.py 不做 create_all，必须先用 Alembic 建表，否则第一次启动必崩。
+    # 迁移偶尔在 PG 刚就绪时抖动，失败交给 restart 策略重试。
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg2://postgres:123456@postgres:5432/lab_agent
       REDIS_URL: redis://redis:6379/0
@@ -35,8 +39,8 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
-      VECTOR_BACKEND: milvus
-      MILVUS_LOCAL_URI: /app/data/milvus.db
+      # compose 已起 pgvector 版 PostgreSQL，向量直接用它，不必再引入没定义的 Milvus。
+      VECTOR_BACKEND: pgvector
     depends_on:
       postgres:
         condition: service_healthy
