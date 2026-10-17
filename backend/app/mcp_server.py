@@ -95,7 +95,11 @@ def main() -> None:
     """入口：用 streamable HTTP 跑 MCP Server。"""
     mcp = build_mcp_server()
     port = int(os.environ.get("MCP_PORT", "8100"))
-    mcp.run(transport="streamable-http", host="127.0.0.1", port=port)
+    # mcp 1.10+ 的 FastMCP.run() 只接受 transport/mount_path，
+    # host/port 必须提前写进 settings，否则启动直接 TypeError。
+    mcp.settings.host = os.environ.get("MCP_HOST", "127.0.0.1")
+    mcp.settings.port = port
+    mcp.run(transport="streamable-http")
 
 
 if __name__ == "__main__":
