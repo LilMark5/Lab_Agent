@@ -56,7 +56,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "5173:80"
+      - "5175:80"
 
 volumes:
   pgdata:

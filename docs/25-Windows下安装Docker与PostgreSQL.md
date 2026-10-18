@@ -143,7 +143,7 @@ cd D:\Work\projects\lab_agent_std
 docker compose up --build
 ```
 
-然后打开 <http://127.0.0.1:5173/>（前端）和 <http://127.0.0.1:8000/docs>（接口文档）。
+然后打开 <http://127.0.0.1:5175/>（前端）和 <http://127.0.0.1:8000/docs>（接口文档）。
 
 停止与清理：
 
@@ -186,7 +186,7 @@ docker compose down -v       # 连数据卷一起删（重置数据库）
 
 - [ ] `docker compose ps` 四个容器都是 running/healthy
 - [ ] `docker compose logs backend` 里有 `Application startup complete`
-- [ ] <http://127.0.0.1:5173/> 能登录（admin/123456）
+- [ ] <http://127.0.0.1:5175/> 能登录（admin/123456）
 
 ---
 
@@ -199,4 +199,5 @@ docker compose down -v       # 连数据卷一起删（重置数据库）
 | `Connection refused` | PG 没监听 5432 | 确认 `ss -ltnp \| grep 5432` |
 | Docker 拉镜像超时 | 网络被墙 | 配镜像加速器：设置 → Docker Engine → `registry-mirrors` |
 | compose 起 backend 一直 restart | alembic 迁移失败 | `docker compose logs backend` 看具体错误 |
-| 端口 8000/5173 被占 | 本地手动起过服务 | 先停掉手动起的，或改 compose 端口映射 |
+| 端口 8000/5175 被占 | 本地手动起过服务 | 先停掉手动起的，或改 compose 端口映射 |
+| 前端报 `EACCES 127.0.0.1:517x` | Radmin VPN 的 RvControlSvc 以 Bound 状态预占了一批端口（1030–14995 区间），Vite 对 EACCES 不会自动换端口 | 换空闲端口改 `vite.config.js` 的 `server.port`，或退出 Radmin VPN |

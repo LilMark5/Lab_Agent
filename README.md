@@ -39,7 +39,7 @@ cd frontend
 npm run dev
 ```
 
-打开 <http://127.0.0.1:5173/>，用 `admin / 123456`（管理员）或 `student / 123456`（学生）登录。
+打开 <http://127.0.0.1:5175/>，用 `admin / 123456`（管理员）或 `student / 123456`（学生）登录。
 也可以直接双击仓库根目录的 `start-dev.ps1`，它会开两个窗口把前后端一起拉起来。
 
 > **⚠️ 最容易卡住的地方**：`backend/.env` 里默认写的是
@@ -160,7 +160,7 @@ npm install
 npm run dev
 ```
 
-浏览器打开 <http://localhost:5173>。Vite 已把 `/api`、`/uploads` 代理到
+浏览器打开 <http://localhost:5175>。Vite 已把 `/api`、`/uploads` 代理到
 `http://127.0.0.1:8000`，所以前端不用写死后端地址。
 
 生产构建：
@@ -203,7 +203,7 @@ docker compose up --build
 | postgres(pgvector) | 5432 | 关系库 + 向量 |
 | redis | 6379 | 缓存/限流 |
 | backend | 8000 | FastAPI + Agent |
-| frontend | 5173 | Nginx + Vue3 |
+| frontend | 5175 | Nginx + Vue3 |
 
 ## 六、RAG 评估
 
@@ -270,7 +270,8 @@ AI 助手页面提供「检索上传文档」开关，关闭后对话只在系�
 | 前端刷新 404 | Vue history 模式 | Nginx 需 `try_files ... /index.html` |
 | AI 返回“未安装 LangGraph” | 依赖没装全 | `pip install -r requirements.txt` |
 | SSE 一次性刷出 | 代理缓冲 | 检查 nginx `proxy_buffering off` |
-| 端口被占用 | 8000/5173 已用 | 换端口，前端改 vite 代理 target |
+| 端口被占用 | 8000/5175 已用 | 换端口，前端改 vite 代理 target |
+| 前端报 `EACCES: permission denied 127.0.0.1:517x` | 端口被 Radmin VPN 等软件以 Bound 状态预占（Vite 不会自动换端口） | 换一个空闲端口改 `vite.config.js` 的 `server.port`，或关掉该软件 |
 
 ## 会话记忆与人工审批（LangGraph 升级）
 

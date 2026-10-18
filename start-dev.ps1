@@ -43,7 +43,7 @@ Start-Process powershell -ArgumentList "-NoExit", "-Command", $backendCmd
 
 Start-Sleep -Seconds 2
 
-Write-Host "==> 前端  http://127.0.0.1:5173/" -ForegroundColor Cyan
+Write-Host "==> 前端  http://127.0.0.1:5175/" -ForegroundColor Cyan
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$frontend'; npm run dev -- --host 127.0.0.1"
 
 if ($WithMcp) {
@@ -56,5 +56,5 @@ if ($WithMcp) {
 Write-Host ""
 Write-Host "启动中。后端首次加载向量模型要几秒，看到 Application startup complete 就可以用了。" -ForegroundColor Green
 Write-Host "  接口文档  http://127.0.0.1:8000/docs" -ForegroundColor Green
-Write-Host "  前端页面  http://127.0.0.1:5173/" -ForegroundColor Green
+Write-Host "  前端页面  http://127.0.0.1:5175/" -ForegroundColor Green
 Write-Host "  账号      admin / 123456（管理员）   student / 123456（学生）" -ForegroundColor Green
