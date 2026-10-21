@@ -5,6 +5,9 @@ __pycache__/
 venv/
 .venv-clean/
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
 
 # 前端
 node_modules/
