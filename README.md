@@ -283,13 +283,3 @@ AI 助手页面提供「检索上传文档」开关，关闭后对话只在系�
   - `POST /api/ai/chat` / `POST /api/ai/chat/resume`（非流式）
   - `POST /api/ai/chat/stream` / `POST /api/ai/chat/stream/resume`（SSE 流式）
 
-## 八、学习路线
-
-详见 [docs/README.md](docs/README.md)，共 20 篇：
-
-01 项目总览 · 02 Vue3 · 03 FastAPI · 04 SQLAlchemy · 05 JWT · 06 LangChain ·
-07 RAG · 08 LangGraph · 09 Tool Calling · 10 SSE · 11 Agent 成长路线 ·
-12 简历面试 · 13 Git · 14 MCP · 15 Milvus/混合检索 · 16 Redis/Docker ·
-17 项目结构详解 · 18 面试题库 · 19 面试 · 20 工程升级上下文（交接文档）
-
-每篇都围绕本项目代码展开，先讲“为什么这样做”，再讲“核心骨架”，最后补企业级知识。
