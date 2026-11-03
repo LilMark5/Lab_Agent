@@ -1,0 +1,33 @@
+# 构建时不要把下面这些打进镜像。
+# 尤其 .env（含 LLM_API_KEY / JWT_SECRET），一旦 COPY . . 就会跟着进镜像。
+
+# 虚拟环境（镜像里会重新 pip install）
+.venv
+.venv-clean
+venv
+
+# 密钥与本地配置
+.env
+.env.*
+!.env.example
+
+# 本地数据与产物（向量库 / checkpoint / sqlite，不该进镜像）
+data/
+*.db
+*.sqlite3
+uploads/
+eval_reports/
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# 测试与文档不影响运行，瘦身镜像
+tests/
+docs/
+
+# 版本控制
+.git
+.gitignore

@@ -1,0 +1,28 @@
+# 离线评估专用依赖（可选安装）。
+#
+# 主 requirements.txt 保持精简；只有要跑「生成质量评估」时才需要这份：
+#
+#     pip install -r requirements-eval.txt
+#     python evaluate_generation.py
+#
+# 检索评估（evaluate_rag.py）不需要这份文件，它只用项目已有依赖。
+
+-r requirements.txt
+
+# ---------------------------------------------------------------------------
+# langchain-community 必须钉在 0.3.x，这不是随便写的版本号：
+#
+# ragas 0.4.3 的 ragas/llms/base.py 在模块顶层无条件执行
+#     from langchain_community.chat_models.vertexai import ChatVertexAI
+#     from langchain_community.llms import VertexAI
+# 而 langchain-community 从 0.4.0 起把这两个模块拆去了独立包
+# （langchain-google-vertexai）。装 0.4.x 会让 `import ragas` 直接抛
+# ModuleNotFoundError: No module named 'langchain_community.chat_models.vertexai'。
+#
+# 0.3.31 仍保留这两个模块（且是懒加载，不装 Google SDK 也能 import），
+# 同时它的依赖声明是 langchain-core>=0.3.78,<2.0.0，与本项目在用的
+# langchain-core 1.x / langgraph 1.x / langchain-openai 1.x 兼容，无需降级。
+#
+# 所以升级 ragas 时请先确认上游修了这个硬导入，再动这个钉版本。
+langchain-community==0.3.31
+ragas>=0.4.3,<0.5

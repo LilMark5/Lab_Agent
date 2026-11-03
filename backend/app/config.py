@@ -1,0 +1,140 @@
+"""全局配置。
+
+本项目使用 pydantic-settings 读取环境变量和 `.env` 文件。
+好处：配置与代码分离，密钥不会硬编码进代码里。
+"""
+
+import os
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 后端项目根目录。`config.py` 位于 backend/app/，所以 `.parent.parent` 是 backend/。
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# 文件上传目录。头像、实验室封面、设备图片都会放到这里。
+UPLOAD_DIR = BASE_DIR / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# 知识库 Markdown 源文件目录。
+KB_DIR = BASE_DIR / "data" / "kb"
+
+# 文件上传限制：100MB，实际业务通常只允许图片。
+MAX_FILE_SIZE = 100 * 1024 * 1024
+
+# 允许上传的后缀。做文件上传时白名单比黑名单安全。
+ALLOWED_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".webp",
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".zip",
+}
+
+
+class Settings(BaseSettings):
+    """应用配置类。
+
+    字段名会映射到环境变量或 `.env` 中的同名键。
+    `extra="ignore"` 表示 `.env` 里多出来的键不会报错。
+    """
+
+    # 数据库连接串。缺省时自动使用本地 SQLite，方便零配置直接运行。
+    # PostgreSQL 示例（生产推荐）：
+    #   postgresql+psycopg2://postgres:123456@127.0.0.1:5432/lab_agent
+    # MySQL 示例：mysql+pymysql://root:123456@127.0.0.1:3306/lab_agent
+    DATABASE_URL: str | None = None
+
+    # JWT 配置。生产环境必须换成足够长的随机密钥，并放到环境变量中。
+    JWT_SECRET_KEY: str = "dev-only-secret-key-change-me-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_HOURS: int = 24
+
+    # LLM 配置。走 OpenAI 兼容协议，可以接 OpenAI、DeepSeek、Agnes 等。
+    LLM_API_KEY: str | None = None
+    LLM_BASE_URL: str = "https://api.openai.com/v1"
+    LLM_MODEL: str = "gpt-4o-mini"
+
+    # RAGAS 评估用的裁判模型（judge）。
+    # 评估的可靠性取决于裁判模型比被测模型更强、更稳定；让「考生自己阅卷」
+    # 会引入系统性噪声（同一段答案重复打分都会抖动）。因此裁判模型独立配置，
+    # 可指向更强的模型（如 deepseek-reasoner / gpt-4o）。留空则回退到被测模型。
+    JUDGE_MODEL: str | None = None
+    JUDGE_API_KEY: str | None = None
+    JUDGE_BASE_URL: str | None = None
+
+    # RAG 使用的本地向量模型。第一次运行会自动下载，耗时可能较长。
+    EMBEDDING_MODEL: str = "BAAI/bge-small-zh-v1.5"
+    HF_ENDPOINT: str | None = None
+    # 文档切块：递归字符切分器的块大小与重叠量。
+    CHUNK_SIZE: int = 200
+    CHUNK_OVERLAP: int = 40
+    # 检索：每路召回 top-k、最终保留块数、父上下文扩展窗口。
+    RETRIEVAL_TOP_K: int = 5
+    FINAL_CONTEXT_K: int = 3
+    CONTEXT_WINDOW: int = 1
+
+    # 向量库后端：auto / chroma / milvus。
+    # milvus 使用 Milvus Lite（嵌入式文件模式，零运维，仍是真正的 Milvus）。
+    # pgvector：需要把 DATABASE_URL 指向启用 pgvector 扩展的 PostgreSQL。
+    VECTOR_BACKEND: str = "auto"
+    # 注意：不要叫 MILVUS_URI，pymilvus 会自动读同名环境变量并当作服务器地址。
+    MILVUS_LOCAL_URI: str = "./data/milvus.db"
+
+    # 混合检索：向量召回 + BM25 关键词召回 + 可选 rerank 重排。
+    HYBRID_SEARCH_ENABLED: bool = True
+    RERANK_ENABLED: bool = True
+    RERANK_MODEL: str = "BAAI/bge-reranker-base"
+
+    # 查询改写：检索前把口语化问句改写成规范检索词，提升召回。
+    # 依赖 LLM，未配置 key 或改写失败时自动回退原始问题。
+    QUERY_REWRITE_ENABLED: bool = False
+
+    # Redis：用于 AI 接口限流与相似问题缓存。
+    REDIS_URL: str | None = None
+
+    # MCP：是否让 Agent 优先从 MCP Server 加载工具。
+    MCP_ENABLED: bool = True
+    MCP_TRANSPORT: str = "streamable_http"
+    MCP_URL: str = "http://127.0.0.1:8100/mcp"
+
+    # LangGraph checkpointer：会话状态持久化。
+    # 有 CHECKPOINT_DATABASE_URL（psycopg3 格式，如 postgresql://...）时用
+    # PostgreSQL 后端（生产推荐，支持多实例、会话状态与业务库同源）；
+    # 否则回退本地 SQLite，保证零配置也能跑。
+    CHECKPOINT_DATABASE_URL: str | None = None
+    CHECKPOINT_DB_PATH: str = str(BASE_DIR / "data" / "checkpoints.db")
+
+    # Agent 工具调用健壮性：单次工具调用的超时秒数、失败重试次数。
+    # 超时防止 DB 慢查询拖垮整张图；重试只针对临时性故障（网络抖动等）。
+    TOOL_TIMEOUT_SECONDS: float = 30.0
+    TOOL_MAX_RETRIES: int = 1
+
+    # 上下文窗口保护：多轮对话 + 检索返回的大段父上下文会把 context 撑爆。
+    # MAX_CONTEXT_TOKENS 是送入 LLM 的消息 token 预算（不含 system prompt，
+    # 用字符/4 的轻量近似估算，避免引入 tiktoken 依赖、对中文更友好）。
+    # 超出预算时按 TRIM_STRATEGY 裁剪历史：
+    #   - sliding_window：保留最新消息，丢弃最早的，最省 token 也最稳；
+    #   - summary：把丢弃的早期对话压缩成一条摘要占位（更保上下文，但依赖
+    #     额外一次 LLM 调用、有额外延迟）。
+    MAX_CONTEXT_TOKENS: int = 4000
+    TRIM_STRATEGY: str = "sliding_window"
+
+    model_config = SettingsConfigDict(
+        env_file=BASE_DIR / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+
+settings = Settings()
+
+# 把镜像地址写进环境变量，sentence-transformers 会自动读取。
+if settings.HF_ENDPOINT:
+    os.environ.setdefault("HF_ENDPOINT", settings.HF_ENDPOINT)

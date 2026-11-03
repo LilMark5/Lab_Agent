@@ -1,0 +1,82 @@
+==========================================================
+ 智能实验室预约系统 · 后端环境手动安装说明
+ 适用：Windows + Python 3.11（推荐，AI 生态最稳）
+==========================================================
+
+一、确认 Python 版本（任选其一）
+
+    py -0p
+
+   应能看到 -V:3.11 这一行。没有 3.11 就去
+   https://www.python.org/downloads/ 装一个，装时勾选 Add to PATH。
+
+二、进入后端目录
+
+    cd D:\Work\projects\lab_agent_std\backend
+
+三、创建虚拟环境（名字可以自己定，这里用 .venv-clean）
+
+    py -3.11 -m venv .venv-clean
+
+四、激活虚拟环境
+
+    .venv-clean\Scripts\Activate.ps1
+
+   PowerShell 如果报“禁止运行脚本”，先执行：
+
+    Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+
+   然后重新激活。
+
+五、安装依赖（用国内镜像，速度快）
+
+    .venv-clean\Scripts\python.exe -m pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
+
+   注意：
+   - 一定要用 .venv-clean\Scripts\python.exe，不能用系统默认 python，
+     否则会装到 Python 3.14 上，导致和之前一样版本对不上。
+   - 这一步会下载 torch、numpy 等，文件较大，耐心等待。
+
+六、创建并填写配置文件
+
+    Copy-Item .env.example .env
+
+   用记事本/VS Code 打开 .env，至少填：
+
+    LLM_API_KEY=你的大模型密钥
+    LLM_BASE_URL=https://api.openai.com/v1
+    LLM_MODEL=gpt-4o-mini
+    HF_ENDPOINT=https://hf-mirror.com
+
+   数据库留空用 SQLite，零配置。
+
+七、启动后端
+
+    .venv-clean\Scripts\python.exe -m uvicorn app.main:app --reload --reload-dir app --port 8000 --host 127.0.0.1
+
+   （激活环境后也可以简写成：
+    uvicorn app.main:app --reload --reload-dir app --port 8000）
+
+八、验证
+
+   浏览器打开：
+     http://127.0.0.1:8000/        看到“后端运行正常”
+     http://127.0.0.1:8000/docs    看到接口文档
+
+   默认账号：
+     管理员 admin / 123456
+     学生   student / 123456
+
+九、常见问题
+
+   1. 报 No module named 'xxx._xxx' 或 pydantic_core 之类的错误
+      -> 说明二进制包版本和 Python 版本对不上。
+        解决：删除 .venv-clean，从第三步重新做，并严格用 py -3.11。
+
+   2. 启动卡在下载模型
+      -> 确认 .env 里有 HF_ENDPOINT=https://hf-mirror.com
+
+   3. pip 下载慢
+      -> 命令后面加 -i https://mirrors.aliyun.com/pypi/simple/
+
+==========================================================
